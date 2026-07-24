@@ -1,5 +1,7 @@
 # Precision Multi-Instrument Lab Studio
 
+**简体中文** | [English](README_EN.md)
+
 面向 Windows 的中英双语、多设备精密采集与分析平台。A、B 为默认启用通道，
 C 为默认关闭的第三仪器通道。每个通道可从 10 个厂家、14 款仪表中独立选择
 型号，并拥有独立 VISA 会话、采集线程、测量功能、单位、时间轴和安全自动保存
