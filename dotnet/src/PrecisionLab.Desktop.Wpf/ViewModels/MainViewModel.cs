@@ -18,7 +18,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private const int AnalysisPointLimit = 65_536;
     private readonly ControlPipeClient _controlClient;
     private readonly DataPipeClient _dataClient;
-    private readonly ServiceProcessManager _serviceManager;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Dictionary<ChannelId, Queue<Measurement>> _analysisPoints =
         Enum.GetValues<ChannelId>().ToDictionary(
@@ -30,12 +29,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public MainViewModel(
         ControlPipeClient controlClient,
         DataPipeClient dataClient,
-        ServiceProcessManager serviceManager,
         LocalizationService localization)
     {
         _controlClient = controlClient;
         _dataClient = dataClient;
-        _serviceManager = serviceManager;
         Localization = localization;
         Channels =
         [
@@ -98,7 +95,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
             catch (TimeoutException)
             {
-                _serviceManager.EnsureStarted();
+                ServiceProcessManager.EnsureStarted();
                 await Task.Delay(750, _lifetime.Token);
                 response = await _controlClient.ConnectAsync(_lifetime.Token);
             }

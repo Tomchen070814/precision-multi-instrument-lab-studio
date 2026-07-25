@@ -3,9 +3,9 @@ using System.IO;
 
 namespace PrecisionLab.Desktop.Wpf.Services;
 
-public sealed class ServiceProcessManager
+public static class ServiceProcessManager
 {
-    public bool EnsureStarted(string? dataDirectory = null)
+    public static bool EnsureStarted(string? dataDirectory = null)
     {
         string executable = Path.Combine(
             AppContext.BaseDirectory,

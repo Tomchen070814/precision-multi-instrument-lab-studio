@@ -17,10 +17,9 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        var serviceManager = new ServiceProcessManager();
         if (e.Args.Contains("--headless-smoke", StringComparer.OrdinalIgnoreCase))
         {
-            int result = await RunHeadlessSmokeAsync(serviceManager).ConfigureAwait(true);
+            int result = await RunHeadlessSmokeAsync().ConfigureAwait(true);
             Shutdown(result);
             return;
         }
@@ -28,7 +27,6 @@ public partial class App : Application
         _viewModel = new MainViewModel(
             new ControlPipeClient(),
             new DataPipeClient(),
-            serviceManager,
             new LocalizationService());
         var window = new MainWindow(_viewModel);
         MainWindow = window;
@@ -42,8 +40,7 @@ public partial class App : Application
         base.OnExit(e);
     }
 
-    private static async Task<int> RunHeadlessSmokeAsync(
-        ServiceProcessManager serviceManager)
+    private static async Task<int> RunHeadlessSmokeAsync()
     {
         await using var client = new ControlPipeClient();
         try
@@ -54,7 +51,7 @@ public partial class App : Application
             }
             catch (TimeoutException)
             {
-                serviceManager.EnsureStarted();
+                ServiceProcessManager.EnsureStarted();
                 await Task.Delay(750).ConfigureAwait(true);
                 await client.ConnectAsync(CancellationToken.None).ConfigureAwait(true);
             }
