@@ -15,6 +15,10 @@ public sealed record ImportedMeasurementData(
 
 public static partial class CsvDataExchange
 {
+    private static readonly string[] LineSeparators = ["\r\n", "\n"];
+
+    private static readonly char[] CandidateDelimiters = [',', '\t', ';'];
+
     private static readonly string[] TimeHints =
         ["time", "timestamp", "date", "elapsed", "second", "时间", "秒"];
 
@@ -50,7 +54,7 @@ public static partial class CsvDataExchange
 
         char delimiter = DetectDelimiter(text);
         string[] lines = text
-            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
+            .Split(LineSeparators, StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length < 2)
         {
             throw new InvalidDataException("The CSV needs a header and at least one row.");
@@ -61,7 +65,7 @@ public static partial class CsvDataExchange
         for (int line = 1; line < lines.Length; line++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            IReadOnlyList<string> row = ParseRow(lines[line], delimiter);
+            List<string> row = ParseRow(lines[line], delimiter);
             for (int column = 0; column < headers.Length; column++)
             {
                 columns[column].Add(column < row.Count ? row[column] : string.Empty);
@@ -179,12 +183,12 @@ public static partial class CsvDataExchange
     }
 
     private static int ChooseColumn(
-        IReadOnlyList<string> headers,
-        IReadOnlyList<NumericColumn> numeric,
-        IReadOnlyList<string> hints,
+        string[] headers,
+        NumericColumn[] numeric,
+        string[] hints,
         int excluded)
     {
-        return Enumerable.Range(0, headers.Count)
+        return Enumerable.Range(0, headers.Length)
             .Where(index => index != excluded && numeric[index].ValidRatio >= 0.5)
             .OrderByDescending(index => ScoreHeader(headers[index], hints))
             .ThenByDescending(index => numeric[index].ValidRatio)
@@ -192,7 +196,7 @@ public static partial class CsvDataExchange
             .FirstOrDefault() ?? -1;
     }
 
-    private static int ScoreHeader(string header, IReadOnlyList<string> hints)
+    private static int ScoreHeader(string header, string[] hints)
     {
         string lowered = header.ToLowerInvariant();
         int score = 0;
@@ -211,7 +215,7 @@ public static partial class CsvDataExchange
         return score;
     }
 
-    private static NumericColumn ParseNumericColumn(IReadOnlyList<string> values)
+    private static NumericColumn ParseNumericColumn(List<string> values)
     {
         var output = Enumerable.Repeat(double.NaN, values.Count).ToArray();
         int valid = 0;
@@ -243,13 +247,13 @@ public static partial class CsvDataExchange
 
     private static char DetectDelimiter(string text)
     {
-        string firstLine = text.Split(["\r\n", "\n"], StringSplitOptions.None)[0];
-        return new[] { ',', '\t', ';' }
+        string firstLine = text.Split(LineSeparators, StringSplitOptions.None)[0];
+        return CandidateDelimiters
             .OrderByDescending(delimiter => firstLine.Count(character => character == delimiter))
             .First();
     }
 
-    private static IReadOnlyList<string> ParseRow(string line, char delimiter)
+    private static List<string> ParseRow(string line, char delimiter)
     {
         var fields = new List<string>();
         var current = new StringBuilder();
