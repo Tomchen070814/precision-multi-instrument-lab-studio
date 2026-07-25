@@ -1,0 +1,20 @@
+<Application
+    x:Class="PrecisionLab.Desktop.Wpf.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <SolidColorBrush x:Key="WindowBrush" Color="#0B1020" />
+    <SolidColorBrush x:Key="PanelBrush" Color="#151C31" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#4CC9F0" />
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#E8EDF7" />
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Margin" Value="4" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Background" Value="#2855A7" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+  </Application.Resources>
+</Application>
