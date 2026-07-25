@@ -16,5 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="../PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
     <ProjectReference Include="../PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+    <ProjectReference Include="../PrecisionLab.Analysis/PrecisionLab.Analysis.csproj" />
+    <ProjectReference Include="../PrecisionLab.Export/PrecisionLab.Export.csproj" />
   </ItemGroup>
 </Project>

@@ -16,9 +16,9 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  build-test-isolated-run:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -29,19 +29,72 @@ jobs:
       - name: Build
         run: dotnet build dotnet/PrecisionLab.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Test
-        run: dotnet test dotnet/PrecisionLab.slnx --configuration Release --no-build
+        run: dotnet test dotnet/PrecisionLab.slnx --configuration Release --no-build --logger "trx;LogFileName=precisionlab-tests.trx"
       - name: Publish service
         run: dotnet publish dotnet/src/PrecisionLab.Service/PrecisionLab.Service.csproj --configuration Release --no-build --output artifacts/service
       - name: Publish desktop
         run: dotnet publish dotnet/src/PrecisionLab.Desktop.Wpf/PrecisionLab.Desktop.Wpf.csproj --configuration Release --no-build --output artifacts/desktop
-      - name: Assemble checkpoint
+      - name: Publish smoke client
+        run: dotnet publish dotnet/tools/PrecisionLab.Smoke/PrecisionLab.Smoke.csproj --configuration Release --no-build --output artifacts/smoke
+      - name: Isolated two-process acceptance
         shell: pwsh
         run: |
-          Copy-Item artifacts/service/* artifacts/desktop/ -Recurse -Force
-          Copy-Item dotnet/README_PHASE1_ARTIFACT.txt artifacts/desktop/ -Force
-          Compress-Archive artifacts/desktop/* artifacts/PrecisionLab-dotnet10-phase1.zip
+          $ErrorActionPreference = "Stop"
+          $env:PRECISIONLAB_INSTANCE = "ci-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $dataDirectory = Join-Path $env:RUNNER_TEMP "PrecisionLabIsolatedData"
+          $outputDirectory = Join-Path $env:RUNNER_TEMP "PrecisionLabIsolatedOutput"
+          New-Item -ItemType Directory -Path $dataDirectory, $outputDirectory -Force | Out-Null
+          $servicePath = Resolve-Path "artifacts/service/PrecisionLab.Service.exe"
+          $smokePath = Resolve-Path "artifacts/smoke/PrecisionLab.Smoke.exe"
+          $desktopPath = Resolve-Path "artifacts/desktop/PrecisionLab.Desktop.Wpf.exe"
+          $service = $null
+          try {
+            $service = Start-Process $servicePath -ArgumentList "--data-dir", $dataDirectory -PassThru
+            Start-Sleep -Seconds 2
+            & $smokePath start $outputDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Detach smoke failed: $LASTEXITCODE" }
+
+            $desktop = Start-Process $desktopPath -ArgumentList "--headless-smoke" -Wait -PassThru
+            if ($desktop.ExitCode -ne 0) { throw "WPF headless smoke failed: $($desktop.ExitCode)" }
+
+            & $smokePath verify $outputDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Continuation smoke failed: $LASTEXITCODE" }
+
+            & $smokePath start-crash $outputDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Crash setup failed: $LASTEXITCODE" }
+            Stop-Process -Id $service.Id -Force
+            Wait-Process -Id $service.Id -ErrorAction SilentlyContinue
+            $service = Start-Process $servicePath -ArgumentList "--data-dir", $dataDirectory -PassThru
+            Start-Sleep -Seconds 2
+
+            & $smokePath verify-recovery $outputDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Recovery smoke failed: $LASTEXITCODE" }
+            "PASS: WPF load, IPC detach/reconnect, 180 durable commits, exports, forced-kill recovery" |
+              Set-Content (Join-Path $outputDirectory "isolated-acceptance.txt")
+          }
+          finally {
+            if ($null -ne $service -and -not $service.HasExited) {
+              Stop-Process -Id $service.Id -Force
+            }
+          }
+          Get-ChildItem $outputDirectory
+      - name: Assemble Windows package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path artifacts/package -Force | Out-Null
+          Copy-Item artifacts/desktop/* artifacts/package/ -Recurse -Force
+          Copy-Item artifacts/service/* artifacts/package/ -Recurse -Force
+          Copy-Item dotnet/README_WINDOWS.txt artifacts/package/ -Force
+          Copy-Item dotnet/INSTALL_WINDOWS.ps1 artifacts/package/ -Force
+          Copy-Item dotnet/UNINSTALL_WINDOWS.ps1 artifacts/package/ -Force
+          Copy-Item dotnet/THIRD_PARTY_NOTICES.md artifacts/package/ -Force
+          Compress-Archive artifacts/package/* artifacts/PrecisionLab-dotnet10-preview.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: PrecisionLab-dotnet10-phase1
-          path: artifacts/PrecisionLab-dotnet10-phase1.zip
+          name: PrecisionLab-dotnet10-preview
+          path: |
+            artifacts/PrecisionLab-dotnet10-preview.zip
+            ${{ runner.temp }}/PrecisionLabIsolatedOutput/*
+            dotnet/tests/PrecisionLab.Core.Tests/TestResults/*
           if-no-files-found: error

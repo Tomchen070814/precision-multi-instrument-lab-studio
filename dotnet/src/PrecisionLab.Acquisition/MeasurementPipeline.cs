@@ -2,39 +2,50 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PrecisionLab.Domain;
+using PrecisionLab.Storage;
 
 namespace PrecisionLab.Acquisition;
 
 public interface IMeasurementPublisher
 {
-    ValueTask PublishAsync(Measurement measurement, CancellationToken cancellationToken);
-}
+    ValueTask PublishAsync(
+        Guid sessionId,
+        Measurement measurement,
+        CancellationToken cancellationToken);
 
-public interface IMeasurementSink : IAsyncDisposable
-{
-    ValueTask WriteAsync(Measurement measurement, CancellationToken cancellationToken);
-
-    ValueTask FlushAsync(CancellationToken cancellationToken);
+    async ValueTask PublishBatchAsync(
+        Guid sessionId,
+        IReadOnlyList<Measurement> measurements,
+        CancellationToken cancellationToken)
+    {
+        foreach (Measurement measurement in measurements)
+        {
+            await PublishAsync(
+                sessionId,
+                measurement,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
 }
 
 public sealed partial class MeasurementPipeline : BackgroundService, IMeasurementPublisher
 {
-    private readonly Channel<Measurement> _ingress;
-    private readonly IMeasurementSink _sink;
+    private readonly Channel<PendingMeasurement> _ingress;
+    private readonly ISessionStore _store;
     private readonly MeasurementHub _hub;
     private readonly ILogger<MeasurementPipeline> _logger;
 
     public MeasurementPipeline(
-        IMeasurementSink sink,
+        ISessionStore store,
         MeasurementHub hub,
         ILogger<MeasurementPipeline> logger,
         int capacity = 4_096)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
-        _sink = sink;
+        _store = store;
         _hub = hub;
         _logger = logger;
-        _ingress = Channel.CreateBounded<Measurement>(
+        _ingress = Channel.CreateBounded<PendingMeasurement>(
             new BoundedChannelOptions(capacity)
             {
                 FullMode = BoundedChannelFullMode.Wait,
@@ -44,36 +55,79 @@ public sealed partial class MeasurementPipeline : BackgroundService, IMeasuremen
             });
     }
 
-    public ValueTask PublishAsync(
+    public async ValueTask PublishAsync(
+        Guid sessionId,
         Measurement measurement,
         CancellationToken cancellationToken) =>
-        _ingress.Writer.WriteAsync(measurement, cancellationToken);
+        await PublishBatchAsync(
+            sessionId,
+            [measurement],
+            cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask PublishBatchAsync(
+        Guid sessionId,
+        IReadOnlyList<Measurement> measurements,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(measurements);
+        if (measurements.Count == 0)
+        {
+            return;
+        }
+
+        var completion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingMeasurement(sessionId, measurements, completion);
+        await _ingress.Writer.WriteAsync(pending, cancellationToken).ConfigureAwait(false);
+        await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        Exception? failure = null;
         try
         {
-            // StopAsync completes the writer so this loop drains every accepted sample.
-            await foreach (Measurement measurement in
+            await _store.InitializeAsync(stoppingToken).ConfigureAwait(false);
+            await foreach (PendingMeasurement pending in
                            _ingress.Reader.ReadAllAsync(CancellationToken.None))
             {
-                await _sink.WriteAsync(
-                    measurement,
-                    CancellationToken.None).ConfigureAwait(false);
-                await _sink.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await _store.AppendBatchAsync(
+                        pending.SessionId,
+                        pending.Measurements,
+                        CancellationToken.None).ConfigureAwait(false);
+                    foreach (Measurement measurement in pending.Measurements)
+                    {
+                        _hub.Publish(measurement);
+                    }
 
-                // The display never sees a sample until its durable flush succeeds.
-                _hub.Publish(measurement);
+                    pending.Completion.TrySetResult();
+                }
+                catch (Exception exception)
+                {
+                    pending.Completion.TrySetException(exception);
+                    failure = exception;
+                    _ingress.Writer.TryComplete(exception);
+                    throw;
+                }
             }
         }
         catch (Exception exception)
         {
+            failure = exception;
             LogPipelineStopped(_logger, exception);
             throw;
         }
         finally
         {
-            await _sink.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            while (_ingress.Reader.TryRead(out PendingMeasurement? pending))
+            {
+                pending.Completion.TrySetException(
+                    failure ?? new InvalidOperationException(
+                        "The durable measurement pipeline stopped."));
+            }
+
             _hub.Complete();
         }
     }
@@ -91,4 +145,9 @@ public sealed partial class MeasurementPipeline : BackgroundService, IMeasuremen
     private static partial void LogPipelineStopped(
         ILogger logger,
         Exception exception);
+
+    private sealed record PendingMeasurement(
+        Guid SessionId,
+        IReadOnlyList<Measurement> Measurements,
+        TaskCompletionSource Completion);
 }

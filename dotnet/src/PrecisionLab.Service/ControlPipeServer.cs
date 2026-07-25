@@ -4,19 +4,28 @@ using Microsoft.Extensions.Logging;
 using PrecisionLab.Acquisition;
 using PrecisionLab.Contracts;
 using PrecisionLab.Domain;
+using PrecisionLab.Drivers.Abstractions;
+using PrecisionLab.Export;
+using PrecisionLab.Storage;
 
 namespace PrecisionLab.Service;
 
 public sealed partial class ControlPipeServer : BackgroundService
 {
     private readonly AcquisitionCoordinator _coordinator;
+    private readonly IVisaBackend _visaBackend;
+    private readonly ISessionStore _store;
     private readonly ILogger<ControlPipeServer> _logger;
 
     public ControlPipeServer(
         AcquisitionCoordinator coordinator,
+        IVisaBackend visaBackend,
+        ISessionStore store,
         ILogger<ControlPipeServer> logger)
     {
         _coordinator = coordinator;
+        _visaBackend = visaBackend;
+        _store = store;
         _logger = logger;
     }
 
@@ -135,6 +144,73 @@ public sealed partial class ControlPipeServer : BackgroundService
                     Enum.GetValues<ChannelId>(),
                     cancellationToken).ConfigureAwait(false);
                 break;
+            case ControlOperations.DiscoverResources:
+                return new ControlResponse(
+                    true,
+                    "ok",
+                    _coordinator.Snapshot(),
+                    Resources: await _visaBackend.DiscoverAsync(
+                        cancellationToken).ConfigureAwait(false));
+            case ControlOperations.ListSessions:
+            {
+                IReadOnlyList<SessionInfo> sessions = await _store.ListSessionsAsync(
+                    Math.Clamp(request.Limit, 1, 10_000),
+                    cancellationToken).ConfigureAwait(false);
+                return new ControlResponse(
+                    true,
+                    "ok",
+                    _coordinator.Snapshot(),
+                    Sessions: sessions.Select(ToSummary).ToArray());
+            }
+            case ControlOperations.ReadSessionWindow:
+            {
+                Guid sessionId = request.SessionId ??
+                    throw new ArgumentException("SessionId is required.");
+                IReadOnlyList<Measurement> measurements =
+                    await _store.ReadMeasurementsAsync(
+                        sessionId,
+                        request.FirstSequence,
+                        Math.Clamp(request.Limit, 1, 50_000),
+                        cancellationToken).ConfigureAwait(false);
+                return new ControlResponse(
+                    true,
+                    "ok",
+                    _coordinator.Snapshot(),
+                    Measurements: measurements);
+            }
+            case ControlOperations.ExportSessionCsv:
+            {
+                Guid sessionId = request.SessionId ??
+                    throw new ArgumentException("SessionId is required.");
+                string outputPath = request.OutputPath ??
+                    throw new ArgumentException("OutputPath is required.");
+                await CsvDataExchange.ExportSessionAsync(
+                    outputPath,
+                    sessionId,
+                    _store,
+                    cancellationToken).ConfigureAwait(false);
+                return new ControlResponse(
+                    true,
+                    "ok",
+                    _coordinator.Snapshot(),
+                    OutputPath: Path.GetFullPath(outputPath));
+            }
+            case ControlOperations.ExportDiagnostics:
+            {
+                string outputPath = request.OutputPath ??
+                    throw new ArgumentException("OutputPath is required.");
+                string created = await DiagnosticReportWriter.CreateAsync(
+                    outputPath,
+                    _coordinator.Snapshot(),
+                    _store.DatabasePath,
+                    request.Language,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                return new ControlResponse(
+                    true,
+                    "ok",
+                    _coordinator.Snapshot(),
+                    OutputPath: created);
+            }
             default:
                 return new ControlResponse(
                     false,
@@ -144,6 +220,21 @@ public sealed partial class ControlPipeServer : BackgroundService
 
         return new ControlResponse(true, "ok", _coordinator.Snapshot());
     }
+
+    private static SessionSummary ToSummary(SessionInfo session) =>
+        new(
+            session.Id,
+            session.Channel,
+            session.InstrumentModel,
+            session.Function,
+            session.Resource,
+            session.StartedUtc,
+            session.EndedUtc,
+            session.Status.ToString(),
+            session.Unit,
+            session.SampleCount,
+            session.CommittedSequence,
+            session.Error);
 
     [LoggerMessage(
         EventId = 100,

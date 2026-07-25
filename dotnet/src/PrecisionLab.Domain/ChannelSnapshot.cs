@@ -21,7 +21,9 @@ public sealed record ChannelSnapshot(
     double? LastValue,
     MeasurementUnit Unit,
     DateTimeOffset? StartedUtc,
-    string? Error);
+    string? Error,
+    Guid? SessionId = null,
+    long CommittedSamples = 0);
 
 public sealed record ServiceSnapshot(
     int ProtocolVersion,

@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Text;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using PrecisionLab.Analysis;
 using PrecisionLab.Contracts;
 using PrecisionLab.Desktop.Wpf.Services;
 using PrecisionLab.Domain;
@@ -11,17 +13,28 @@ namespace PrecisionLab.Desktop.Wpf.ViewModels;
 
 public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
+    private const int AnalysisPointLimit = 65_536;
     private readonly ControlPipeClient _controlClient;
     private readonly DataPipeClient _dataClient;
+    private readonly ServiceProcessManager _serviceManager;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly Dictionary<ChannelId, Queue<Measurement>> _analysisPoints =
+        Enum.GetValues<ChannelId>().ToDictionary(
+            channel => channel,
+            _ => new Queue<Measurement>());
     private Task? _statusTask;
+    private int _analysisCounter;
 
     public MainViewModel(
         ControlPipeClient controlClient,
-        DataPipeClient dataClient)
+        DataPipeClient dataClient,
+        ServiceProcessManager serviceManager,
+        LocalizationService localization)
     {
         _controlClient = controlClient;
         _dataClient = dataClient;
+        _serviceManager = serviceManager;
+        Localization = localization;
         Channels =
         [
             new ChannelViewModel(ChannelId.A),
@@ -33,11 +46,19 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public event Action<Measurement>? MeasurementArrived;
 
+    public LocalizationService Localization { get; }
+
     public ObservableCollection<ChannelViewModel> Channels { get; }
 
+    public ObservableCollection<string> DiscoveredResources { get; } = [];
+
+    public ObservableCollection<SessionSummary> Sessions { get; } = [];
+
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(StartAllCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopAllCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ScanResourcesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshSessionsCommand))]
     private bool _isConnected;
 
     [ObservableProperty]
@@ -52,19 +73,44 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     private string _systemMemoryText = "RAM —";
 
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ExportSelectedSessionCommand))]
+    private SessionSummary? _selectedSession;
+
+    [ObservableProperty]
+    private string _analysisText = "Waiting for measurement data.";
+
     private bool CanControlService() => IsConnected;
+
+    private bool CanExportSession() => IsConnected && SelectedSession is not null;
 
     [RelayCommand]
     public async Task ConnectAsync()
     {
         try
         {
-            ControlResponse response = await _controlClient.ConnectAsync(_lifetime.Token);
+            ControlResponse response;
+            try
+            {
+                response = await _controlClient.ConnectAsync(_lifetime.Token);
+            }
+            catch (TimeoutException)
+            {
+                _serviceManager.EnsureStarted();
+                await Task.Delay(750, _lifetime.Token);
+                response = await _controlClient.ConnectAsync(_lifetime.Token);
+            }
+
             await _dataClient.ConnectAsync(_lifetime.Token);
             IsConnected = true;
             ServiceStatus = response.Message;
             Apply(response.Snapshot);
-            _statusTask ??= PollStatusAsync(_lifetime.Token);
+            if (_statusTask is null || _statusTask.IsCompleted)
+            {
+                _statusTask = PollStatusAsync(_lifetime.Token);
+            }
+
+            await RefreshSessionsAsync();
         }
         catch (Exception exception)
         {
@@ -74,13 +120,24 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     [RelayCommand(CanExecute = nameof(CanControlService))]
-    private async Task StartAllAsync()
+    private async Task StartSelectedAsync()
     {
         try
         {
-            ControlResponse response =
-                await _controlClient.StartAllAsync(_lifetime.Token);
-            ServiceStatus = "A/B/C digital twins running";
+            ChannelViewModel[] selected = Channels.Where(item => item.IsSelected).ToArray();
+            if (selected.Length == 0)
+            {
+                throw new InvalidOperationException("Select at least one channel.");
+            }
+
+            var settings = selected.ToDictionary(
+                item => item.Channel,
+                item => item.BuildSettings());
+            ControlResponse response = await _controlClient.StartAsync(
+                selected.Select(item => item.Channel).ToArray(),
+                settings,
+                _lifetime.Token);
+            ServiceStatus = "Selected channels started.";
             Apply(response.Snapshot);
         }
         catch (Exception exception)
@@ -96,14 +153,108 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             ControlResponse response =
                 await _controlClient.StopAllAsync(_lifetime.Token);
-            ServiceStatus = "All channels stopped after durable pipeline drain";
+            ServiceStatus = "All channels stopped after durable pipeline drain.";
             Apply(response.Snapshot);
+            await RefreshSessionsAsync();
         }
         catch (Exception exception)
         {
             ServiceStatus = $"Stop failed: {exception.Message}";
         }
     }
+
+    [RelayCommand(CanExecute = nameof(CanControlService))]
+    private async Task ScanResourcesAsync()
+    {
+        try
+        {
+            ControlResponse response =
+                await _controlClient.DiscoverResourcesAsync(_lifetime.Token);
+            DiscoveredResources.Clear();
+            foreach (string resource in response.Resources ?? [])
+            {
+                DiscoveredResources.Add(resource);
+            }
+
+            ServiceStatus = $"VISA scan found {DiscoveredResources.Count} resources.";
+        }
+        catch (Exception exception)
+        {
+            ServiceStatus = $"VISA scan failed: {exception.Message}";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanControlService))]
+    private async Task RefreshSessionsAsync()
+    {
+        try
+        {
+            ControlResponse response =
+                await _controlClient.ListSessionsAsync(500, _lifetime.Token);
+            Guid? selectedId = SelectedSession?.Id;
+            Sessions.Clear();
+            foreach (SessionSummary session in response.Sessions ?? [])
+            {
+                Sessions.Add(session);
+            }
+
+            SelectedSession = Sessions.FirstOrDefault(item => item.Id == selectedId) ??
+                Sessions.FirstOrDefault();
+        }
+        catch (Exception exception)
+        {
+            ServiceStatus = $"Session refresh failed: {exception.Message}";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanExportSession))]
+    private async Task ExportSelectedSessionAsync()
+    {
+        if (SelectedSession is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string directory = EnsureExportDirectory();
+            string path = Path.Combine(
+                directory,
+                $"session-{SelectedSession.Id:D}.csv");
+            ControlResponse response = await _controlClient.ExportSessionCsvAsync(
+                SelectedSession.Id,
+                path,
+                _lifetime.Token);
+            ServiceStatus = $"CSV exported: {response.OutputPath}";
+        }
+        catch (Exception exception)
+        {
+            ServiceStatus = $"CSV export failed: {exception.Message}";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanControlService))]
+    private async Task ExportDiagnosticsAsync()
+    {
+        try
+        {
+            string path = Path.Combine(
+                EnsureExportDirectory(),
+                $"diagnostic-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.zip");
+            ControlResponse response = await _controlClient.ExportDiagnosticsAsync(
+                path,
+                Localization.CurrentLanguage,
+                _lifetime.Token);
+            ServiceStatus = $"Diagnostic ZIP exported: {response.OutputPath}";
+        }
+        catch (Exception exception)
+        {
+            ServiceStatus = $"Diagnostic export failed: {exception.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleLanguage() => Localization.Toggle();
 
     public async ValueTask DisposeAsync()
     {
@@ -152,7 +303,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     {
                         IsConnected = false;
                         ServiceStatus =
-                            $"Service disconnected; acquisition state unknown: {exception.Message}";
+                            $"Service disconnected; acquisition continues independently: " +
+                            exception.Message;
                     });
                 return;
             }
@@ -166,8 +318,71 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             {
                 Channels.Single(channel => channel.Channel == measurement.Channel)
                     .Apply(measurement);
+                Queue<Measurement> points = _analysisPoints[measurement.Channel];
+                points.Enqueue(measurement);
+                while (points.Count > AnalysisPointLimit)
+                {
+                    points.Dequeue();
+                }
+
+                _analysisCounter++;
+                if (_analysisCounter % 20 == 0)
+                {
+                    UpdateAnalysis();
+                }
+
                 MeasurementArrived?.Invoke(measurement);
             });
+    }
+
+    private void UpdateAnalysis()
+    {
+        var text = new StringBuilder();
+        foreach ((ChannelId channel, Queue<Measurement> measurements) in _analysisPoints)
+        {
+            if (measurements.Count < 2)
+            {
+                continue;
+            }
+
+            Measurement[] snapshot = measurements.ToArray();
+            double[] values = snapshot.Select(item => item.Value).ToArray();
+            double[] elapsed =
+                snapshot.Select(item => item.Elapsed.TotalSeconds).ToArray();
+            StatisticsResult statistics = StatisticsAnalyzer.Describe(values, elapsed);
+            LinearFitResult trend = StatisticsAnalyzer.LinearFit(elapsed, values);
+            text.AppendLine(
+                $"{channel} · n={statistics.Count:N0} · mean={statistics.Mean:G12} " +
+                $"{snapshot[^1].Unit.Symbol()} · σ={statistics.StandardDeviation:G6} · " +
+                $"RMS={statistics.Rms:G12} · drift={trend.DriftPerHour:G6}/h");
+
+            if (snapshot.Length >= 32)
+            {
+                double samplePeriod = SpectrumAnalyzer.EstimateSamplePeriod(elapsed);
+                SpectrumResult spectrum =
+                    SpectrumAnalyzer.Spectrum(values, samplePeriod);
+                int peak = 0;
+                for (int index = 1; index < spectrum.Amplitude.Length; index++)
+                {
+                    if (spectrum.Amplitude[index] > spectrum.Amplitude[peak])
+                    {
+                        peak = index;
+                    }
+                }
+
+                AllanResult allan =
+                    SpectrumAnalyzer.AllanDeviation(values, samplePeriod);
+                if (spectrum.Amplitude.Length > 0)
+                {
+                    text.AppendLine(
+                        $"    FFT peak={spectrum.Frequency[peak]:G6} Hz / " +
+                        $"{spectrum.Amplitude[peak]:G6}; " +
+                        $"ASD bins={spectrum.Asd.Length}; Allan points={allan.Tau.Length}");
+                }
+            }
+        }
+
+        AnalysisText = text.Length == 0 ? "Waiting for measurement data." : text.ToString();
     }
 
     private void Apply(ServiceSnapshot? snapshot)
@@ -184,11 +399,21 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         ServiceMemoryMb = snapshot.ServiceWorkingSetBytes / 1_048_576.0;
         ServiceStatus =
             $"Service PID {snapshot.ServiceProcessId} · protocol {snapshot.ProtocolVersion} · " +
-            $"{snapshot.ServiceVersion}";
+            snapshot.ServiceVersion;
         foreach (ChannelSnapshot channelSnapshot in snapshot.Channels)
         {
             Channels.Single(channel => channel.Channel == channelSnapshot.Channel)
                 .Apply(channelSnapshot);
         }
+    }
+
+    private static string EnsureExportDirectory()
+    {
+        string directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "PrecisionLab",
+            "Exports");
+        Directory.CreateDirectory(directory);
+        return directory;
     }
 }

@@ -38,16 +38,68 @@ public sealed class ControlPipeClient : IAsyncDisposable
             new ControlRequest(ControlOperations.Snapshot),
             cancellationToken);
 
-    public Task<ControlResponse> StartAllAsync(CancellationToken cancellationToken) =>
+    public Task<ControlResponse> StartAsync(
+        IReadOnlyList<ChannelId> channels,
+        IReadOnlyDictionary<ChannelId, AcquisitionSettings> settings,
+        CancellationToken cancellationToken) =>
         SendAsync(
             new ControlRequest(
                 ControlOperations.Start,
-                Enum.GetValues<ChannelId>()),
+                channels,
+                settings),
             cancellationToken);
 
     public Task<ControlResponse> StopAllAsync(CancellationToken cancellationToken) =>
         SendAsync(
             new ControlRequest(ControlOperations.StopAll),
+            cancellationToken);
+
+    public Task<ControlResponse> DiscoverResourcesAsync(
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            new ControlRequest(ControlOperations.DiscoverResources),
+            cancellationToken);
+
+    public Task<ControlResponse> ListSessionsAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            new ControlRequest(ControlOperations.ListSessions, Limit: limit),
+            cancellationToken);
+
+    public Task<ControlResponse> ReadSessionWindowAsync(
+        Guid sessionId,
+        long firstSequence,
+        int limit,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            new ControlRequest(
+                ControlOperations.ReadSessionWindow,
+                SessionId: sessionId,
+                FirstSequence: firstSequence,
+                Limit: limit),
+            cancellationToken);
+
+    public Task<ControlResponse> ExportSessionCsvAsync(
+        Guid sessionId,
+        string path,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            new ControlRequest(
+                ControlOperations.ExportSessionCsv,
+                SessionId: sessionId,
+                OutputPath: path),
+            cancellationToken);
+
+    public Task<ControlResponse> ExportDiagnosticsAsync(
+        string path,
+        string language,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            new ControlRequest(
+                ControlOperations.ExportDiagnostics,
+                OutputPath: path,
+                Language: language),
             cancellationToken);
 
     public async ValueTask DisposeAsync()

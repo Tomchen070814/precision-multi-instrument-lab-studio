@@ -1,18 +1,35 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using PrecisionLab.Acquisition;
 using PrecisionLab.Domain;
+using PrecisionLab.Storage;
 
 namespace PrecisionLab.Core.Tests;
 
 public sealed class PipelineTests
 {
     [Fact]
-    public async Task DisplayPublicationHappensOnlyAfterDurableFlush()
+    public async Task DisplayPublicationHappensOnlyAfterSqliteCommit()
     {
-        var sink = new TrackingSink();
+        await using var temporary = new TemporaryDirectory();
+        await using var store = new SqliteSessionStore(
+            Path.Combine(temporary.Path, "sessions.db"));
+        await store.InitializeAsync(CancellationToken.None);
+        var settings = new AcquisitionSettings { Resource = "SIM::PIPELINE" };
+        Guid sessionId = await store.BeginSessionAsync(
+            ChannelId.A,
+            settings,
+            new InstrumentIdentity(
+                settings.InstrumentModel,
+                "SIMULATOR",
+                settings.Resource,
+                "1",
+                string.Empty,
+                50),
+            DateTimeOffset.UtcNow,
+            CancellationToken.None);
         var hub = new MeasurementHub();
         var pipeline = new MeasurementPipeline(
-            sink,
+            store,
             hub,
             NullLogger<MeasurementPipeline>.Instance,
             capacity: 2);
@@ -27,36 +44,56 @@ public sealed class PipelineTests
             0.1,
             MeasurementUnit.Volt,
             null);
-        await pipeline.PublishAsync(measurement, CancellationToken.None);
+        await pipeline.PublishAsync(
+            sessionId,
+            measurement,
+            CancellationToken.None);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         Measurement displayed = await subscription.Reader.ReadAsync(timeout.Token);
+        IReadOnlyList<Measurement> committed = await store.ReadMeasurementsAsync(
+            sessionId,
+            0,
+            10,
+            timeout.Token);
 
         Assert.Equal(measurement, displayed);
-        Assert.True(sink.Flushed);
-
+        Assert.Equal([measurement], committed);
         await pipeline.StopAsync(CancellationToken.None);
     }
 
-    private sealed class TrackingSink : IMeasurementSink
+    [Fact]
+    public async Task NonContiguousSequenceFailsInsteadOfSilentlyDroppingData()
     {
-        public bool Flushed { get; private set; }
+        await using var temporary = new TemporaryDirectory();
+        await using var store = new SqliteSessionStore(
+            Path.Combine(temporary.Path, "sessions.db"));
+        await store.InitializeAsync(CancellationToken.None);
+        var settings = new AcquisitionSettings { Resource = "SIM::ORDER" };
+        Guid sessionId = await store.BeginSessionAsync(
+            ChannelId.A,
+            settings,
+            new InstrumentIdentity(
+                settings.InstrumentModel,
+                "SIMULATOR",
+                settings.Resource,
+                "1",
+                string.Empty,
+                50),
+            DateTimeOffset.UtcNow,
+            CancellationToken.None);
 
-        public ValueTask WriteAsync(
-            Measurement measurement,
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Flushed = false;
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask FlushAsync(CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Flushed = true;
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.AppendAsync(
+                    sessionId,
+                    new Measurement(
+                        ChannelId.A,
+                        1,
+                        DateTimeOffset.UtcNow,
+                        TimeSpan.Zero,
+                        1,
+                        MeasurementUnit.Volt,
+                        null),
+                    CancellationToken.None)
+                .AsTask());
     }
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Windows;
+using PrecisionLab.Contracts;
 using PrecisionLab.Desktop.Wpf.Services;
 using PrecisionLab.Desktop.Wpf.ViewModels;
 
@@ -16,7 +17,19 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        _viewModel = new MainViewModel(new ControlPipeClient(), new DataPipeClient());
+        var serviceManager = new ServiceProcessManager();
+        if (e.Args.Contains("--headless-smoke", StringComparer.OrdinalIgnoreCase))
+        {
+            int result = await RunHeadlessSmokeAsync(serviceManager).ConfigureAwait(true);
+            Shutdown(result);
+            return;
+        }
+
+        _viewModel = new MainViewModel(
+            new ControlPipeClient(),
+            new DataPipeClient(),
+            serviceManager,
+            new LocalizationService());
         var window = new MainWindow(_viewModel);
         MainWindow = window;
         window.Show();
@@ -27,5 +40,34 @@ public partial class App : Application
     {
         _viewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         base.OnExit(e);
+    }
+
+    private static async Task<int> RunHeadlessSmokeAsync(
+        ServiceProcessManager serviceManager)
+    {
+        await using var client = new ControlPipeClient();
+        try
+        {
+            try
+            {
+                await client.ConnectAsync(CancellationToken.None).ConfigureAwait(true);
+            }
+            catch (TimeoutException)
+            {
+                serviceManager.EnsureStarted();
+                await Task.Delay(750).ConfigureAwait(true);
+                await client.ConnectAsync(CancellationToken.None).ConfigureAwait(true);
+            }
+
+            ControlResponse response = await client.SnapshotAsync(
+                CancellationToken.None).ConfigureAwait(true);
+            return response.Snapshot?.ProtocolVersion == PipeNames.ProtocolVersion
+                ? 0
+                : 2;
+        }
+        catch
+        {
+            return 1;
+        }
     }
 }

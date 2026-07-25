@@ -7,7 +7,7 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <VersionPrefix>0.6.0</VersionPrefix>
-    <VersionSuffix>alpha.1</VersionSuffix>
+    <VersionSuffix>beta.1</VersionSuffix>
     <Authors>Louis</Authors>
     <RepositoryUrl>https://github.com/Tomchen070814/precision-multi-instrument-lab-studio</RepositoryUrl>
   </PropertyGroup>

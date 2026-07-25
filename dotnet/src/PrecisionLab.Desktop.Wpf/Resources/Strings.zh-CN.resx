@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="AppTitle" xml:space="preserve"><value>多仪表精密采集与分析平台</value></data>
+  <data name="Acquisition" xml:space="preserve"><value>采集</value></data>
+  <data name="Trend" xml:space="preserve"><value>趋势</value></data>
+  <data name="Analysis" xml:space="preserve"><value>分析</value></data>
+  <data name="Sessions" xml:space="preserve"><value>会话</value></data>
+  <data name="Reconnect" xml:space="preserve"><value>重新连接</value></data>
+  <data name="Scan" xml:space="preserve"><value>扫描 VISA</value></data>
+  <data name="Start" xml:space="preserve"><value>开始</value></data>
+  <data name="Stop" xml:space="preserve"><value>停止</value></data>
+  <data name="StartSelected" xml:space="preserve"><value>启动所选通道</value></data>
+  <data name="StopAll" xml:space="preserve"><value>全部停止</value></data>
+  <data name="Instrument" xml:space="preserve"><value>仪表型号</value></data>
+  <data name="Channel" xml:space="preserve"><value>通道</value></data>
+  <data name="Model" xml:space="preserve"><value>型号</value></data>
+  <data name="Resource" xml:space="preserve"><value>VISA 地址</value></data>
+  <data name="Function" xml:space="preserve"><value>测量功能</value></data>
+  <data name="Range" xml:space="preserve"><value>量程</value></data>
+  <data name="Nplc" xml:space="preserve"><value>NPLC</value></data>
+  <data name="Digits" xml:space="preserve"><value>位数</value></data>
+  <data name="Autozero" xml:space="preserve"><value>自动调零</value></data>
+  <data name="IntervalMs" xml:space="preserve"><value>间隔（毫秒）</value></data>
+  <data name="MaxSamples" xml:space="preserve"><value>最大点数（留空为连续）</value></data>
+  <data name="BurstAperture" xml:space="preserve"><value>突发孔径（µs）</value></data>
+  <data name="Durability" xml:space="preserve"><value>耐久模式</value></data>
+  <data name="Committed" xml:space="preserve"><value>已提交</value></data>
+  <data name="Export" xml:space="preserve"><value>导出 CSV</value></data>
+  <data name="Diagnostics" xml:space="preserve"><value>导出诊断包</value></data>
+  <data name="Refresh" xml:space="preserve"><value>刷新</value></data>
+  <data name="Statistics" xml:space="preserve"><value>统计</value></data>
+  <data name="Spectrum" xml:space="preserve"><value>FFT / ASD</value></data>
+  <data name="Stability" xml:space="preserve"><value>Allan / 漂移</value></data>
+  <data name="AnalysisDescription" xml:space="preserve"><value>统计 · FFT 幅度 · ASD · Allan 偏差 · 漂移</value></data>
+  <data name="StartUtc" xml:space="preserve"><value>开始时间（UTC）</value></data>
+  <data name="Samples" xml:space="preserve"><value>点数</value></data>
+  <data name="Status" xml:space="preserve"><value>状态</value></data>
+  <data name="Error" xml:space="preserve"><value>错误</value></data>
+  <data name="Language" xml:space="preserve"><value>English</value></data>
+  <data name="ServiceDisconnected" xml:space="preserve"><value>采集服务未连接</value></data>
+</root>

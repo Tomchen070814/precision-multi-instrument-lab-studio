@@ -15,7 +15,11 @@
     <ProjectReference Include="../../src/PrecisionLab.Acquisition/PrecisionLab.Acquisition.csproj" />
     <ProjectReference Include="../../src/PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
     <ProjectReference Include="../../src/PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Analysis/PrecisionLab.Analysis.csproj" />
     <ProjectReference Include="../../src/PrecisionLab.Drivers.Abstractions/PrecisionLab.Drivers.Abstractions.csproj" />
     <ProjectReference Include="../../src/PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Visa/PrecisionLab.Drivers.Visa.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Export/PrecisionLab.Export.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Storage/PrecisionLab.Storage.csproj" />
   </ItemGroup>
 </Project>

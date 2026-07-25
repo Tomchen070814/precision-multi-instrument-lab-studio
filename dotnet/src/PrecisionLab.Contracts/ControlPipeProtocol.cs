@@ -6,7 +6,7 @@ namespace PrecisionLab.Contracts;
 
 public static class ControlPipeProtocol
 {
-    private const int MaximumPayloadBytes = 1 * 1024 * 1024;
+    private const int MaximumPayloadBytes = 16 * 1024 * 1024;
 
     public static JsonSerializerOptions JsonOptions { get; } = CreateOptions();
 

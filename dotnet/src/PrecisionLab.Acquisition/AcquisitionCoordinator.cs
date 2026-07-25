@@ -2,6 +2,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PrecisionLab.Domain;
 using PrecisionLab.Drivers.Abstractions;
+using PrecisionLab.Storage;
 
 namespace PrecisionLab.Acquisition;
 
@@ -14,6 +15,7 @@ public sealed class AcquisitionCoordinator : IHostedService, IDisposable
     public AcquisitionCoordinator(
         IInstrumentDriverFactory driverFactory,
         IMeasurementPublisher publisher,
+        ISessionStore store,
         ILogger<AcquisitionCoordinator> logger)
     {
         ArgumentNullException.ThrowIfNull(driverFactory);
@@ -36,7 +38,13 @@ public sealed class AcquisitionCoordinator : IHostedService, IDisposable
         };
         _channels = Enum.GetValues<ChannelId>().ToDictionary(
             id => id,
-            id => new ChannelRuntime(id, _settings[id], driverFactory, publisher, logger));
+            id => new ChannelRuntime(
+                id,
+                _settings[id],
+                driverFactory,
+                publisher,
+                store,
+                logger));
     }
 
     public DateTimeOffset ServiceStartedUtc { get; }
@@ -66,6 +74,8 @@ public sealed class AcquisitionCoordinator : IHostedService, IDisposable
                     _settings[channel] = configured.Validate();
                 }
             }
+
+            EnsureUniquePhysicalResources(selected);
 
             var release = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,7 +124,7 @@ public sealed class AcquisitionCoordinator : IHostedService, IDisposable
     public ServiceSnapshot Snapshot() =>
         new(
             ProtocolVersion: 1,
-            ServiceVersion: "0.6.0-alpha.1",
+            ServiceVersion: "0.6.0-beta.1",
             ServiceStartedUtc: ServiceStartedUtc,
             ServiceProcessId: Environment.ProcessId,
             ServiceWorkingSetBytes: Environment.WorkingSet,
@@ -151,6 +161,36 @@ public sealed class AcquisitionCoordinator : IHostedService, IDisposable
         catch
         {
             // Preserve the original prepare failure.
+        }
+    }
+
+    private void EnsureUniquePhysicalResources(IReadOnlyCollection<ChannelId> selected)
+    {
+        var resources = new List<(ChannelId Channel, string Resource)>();
+        foreach (ChannelId channel in Enum.GetValues<ChannelId>())
+        {
+            ChannelSnapshot snapshot = _channels[channel].Snapshot();
+            bool active = snapshot.State is not (
+                ChannelState.Stopped or ChannelState.Faulted);
+            if (!selected.Contains(channel) && !active)
+            {
+                continue;
+            }
+
+            string resource = _settings[channel].Resource.Trim();
+            if (!resource.StartsWith("SIM::", StringComparison.OrdinalIgnoreCase))
+            {
+                resources.Add((channel, resource.ToUpperInvariant()));
+            }
+        }
+
+        IGrouping<string, (ChannelId Channel, string Resource)>? duplicate =
+            resources.GroupBy(item => item.Resource).FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            throw new InvalidOperationException(
+                $"Physical VISA resource {duplicate.Key} is assigned to channels " +
+                $"{string.Join(", ", duplicate.Select(item => item.Channel))}.");
         }
     }
 }

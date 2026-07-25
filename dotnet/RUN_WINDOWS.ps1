@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $solutionRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$dataDirectory = Join-Path $env:LOCALAPPDATA "PrecisionLab"
 Push-Location $solutionRoot
 try {
     dotnet restore .\PrecisionLab.slnx
@@ -9,7 +10,7 @@ try {
 
     $service = Join-Path $solutionRoot "src\PrecisionLab.Service\bin\Debug\net10.0-windows\PrecisionLab.Service.exe"
     $desktop = Join-Path $solutionRoot "src\PrecisionLab.Desktop.Wpf\bin\Debug\net10.0-windows\PrecisionLab.Desktop.Wpf.exe"
-    Start-Process -FilePath $service
+    Start-Process -FilePath $service -ArgumentList "--data-dir", $dataDirectory
     Start-Sleep -Milliseconds 700
     Start-Process -FilePath $desktop
 }

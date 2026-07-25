@@ -12,5 +12,8 @@
     <ProjectReference Include="../PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
     <ProjectReference Include="../PrecisionLab.Drivers.Abstractions/PrecisionLab.Drivers.Abstractions.csproj" />
     <ProjectReference Include="../PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+    <ProjectReference Include="../PrecisionLab.Drivers.Visa/PrecisionLab.Drivers.Visa.csproj" />
+    <ProjectReference Include="../PrecisionLab.Export/PrecisionLab.Export.csproj" />
+    <ProjectReference Include="../PrecisionLab.Storage/PrecisionLab.Storage.csproj" />
   </ItemGroup>
 </Project>
