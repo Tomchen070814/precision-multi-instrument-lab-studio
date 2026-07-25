@@ -254,7 +254,7 @@ public sealed class SqliteSessionStore : ISessionStore
     public async ValueTask CompleteSessionAsync(
         Guid sessionId,
         SessionCompletionStatus status,
-        string? error,
+        string? failureMessage,
         CancellationToken cancellationToken)
     {
         if (status == SessionCompletionStatus.Running)
@@ -277,7 +277,9 @@ public sealed class SqliteSessionStore : ISessionStore
                 """;
             command.Parameters.AddWithValue("$status", (int)status);
             command.Parameters.AddWithValue("$ended", DateTimeOffset.UtcNow.UtcTicks);
-            command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$error",
+                (object?)failureMessage ?? DBNull.Value);
             command.Parameters.AddWithValue(
                 "$id",
                 sessionId.ToString("D", CultureInfo.InvariantCulture));

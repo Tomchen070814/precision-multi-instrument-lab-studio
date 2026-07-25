@@ -6,7 +6,7 @@ namespace PrecisionLab.Drivers.Visa;
 
 public sealed class Fluke8508ADriver : VisaInstrumentDriverBase
 {
-    private static readonly IReadOnlyDictionary<int, (double Fast, double Normal)>
+    private static readonly Dictionary<int, (double Fast, double Normal)>
         DcIntegrationPlc = new Dictionary<int, (double Fast, double Normal)>
         {
             [5] = (0.165, 1),

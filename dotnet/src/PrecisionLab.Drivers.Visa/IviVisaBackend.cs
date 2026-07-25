@@ -26,7 +26,7 @@ public sealed class IviVisaBackend : IVisaBackend
         IVisaSession visaSession = await Task.Run(
             () => GlobalResourceManager.Open(
                 resource,
-                AccessModes.NoLock,
+                AccessModes.ExclusiveLock,
                 5_000),
             cancellationToken).ConfigureAwait(false);
         if (visaSession is not IMessageBasedSession messageSession)

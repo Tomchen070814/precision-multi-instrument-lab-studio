@@ -51,7 +51,7 @@ public interface ISessionStore : IAsyncDisposable
     ValueTask CompleteSessionAsync(
         Guid sessionId,
         SessionCompletionStatus status,
-        string? error,
+        string? failureMessage,
         CancellationToken cancellationToken);
 
     ValueTask<IReadOnlyList<SessionInfo>> ListSessionsAsync(

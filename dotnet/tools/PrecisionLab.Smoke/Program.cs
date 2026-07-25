@@ -300,7 +300,7 @@ internal static class SmokeProgram
             return new DataConnection(pipe);
         }
 
-        public Task<Measurement> ReadAsync(CancellationToken cancellationToken) =>
+        public ValueTask<Measurement> ReadAsync(CancellationToken cancellationToken) =>
             DataFrameCodec.ReadMeasurementAsync(_pipe, cancellationToken);
 
         public ValueTask DisposeAsync() => _pipe.DisposeAsync();

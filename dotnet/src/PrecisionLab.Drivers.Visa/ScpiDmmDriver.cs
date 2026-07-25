@@ -36,7 +36,7 @@ internal sealed record ScpiDmmProfile(
 
 public sealed class ScpiDmmDriver : VisaInstrumentDriverBase
 {
-    private static readonly IReadOnlyDictionary<MeasurementFunction, string> FunctionPaths =
+    private static readonly Dictionary<MeasurementFunction, string> FunctionPaths =
         new Dictionary<MeasurementFunction, string>
         {
             [MeasurementFunction.DcVoltage] = "VOLT:DC",
@@ -49,7 +49,7 @@ public sealed class ScpiDmmDriver : VisaInstrumentDriverBase
             [MeasurementFunction.Period] = "PER",
         };
 
-    private static readonly IReadOnlySet<MeasurementFunction> NplcFunctions =
+    private static readonly HashSet<MeasurementFunction> NplcFunctions =
         new HashSet<MeasurementFunction>
         {
             MeasurementFunction.DcVoltage,
@@ -58,7 +58,7 @@ public sealed class ScpiDmmDriver : VisaInstrumentDriverBase
             MeasurementFunction.DcCurrent,
         };
 
-    private static readonly IReadOnlyDictionary<InstrumentModel, ScpiDmmProfile> Profiles =
+    private static readonly Dictionary<InstrumentModel, ScpiDmmProfile> Profiles =
         CreateProfiles();
 
     private readonly ScpiDmmProfile _profile;
@@ -289,7 +289,7 @@ public sealed class ScpiDmmDriver : VisaInstrumentDriverBase
                 settings.Autozero.ToUpperInvariant(),
                 StringComparison.Ordinal);
 
-    private static IReadOnlyDictionary<InstrumentModel, ScpiDmmProfile> CreateProfiles() =>
+    private static Dictionary<InstrumentModel, ScpiDmmProfile> CreateProfiles() =>
         new Dictionary<InstrumentModel, ScpiDmmProfile>
         {
             [InstrumentModel.Keysight34465A] = new(
