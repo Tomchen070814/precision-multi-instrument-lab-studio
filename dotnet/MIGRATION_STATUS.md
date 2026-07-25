@@ -28,7 +28,8 @@
 - [x] Non-simulated resources fail closed.
 - [x] Core protocol, catalog, driver and pipeline tests.
 - [x] Windows CI and downloadable checkpoint artifact definition.
-- [ ] Windows CI compile and tests confirmed.
+- [x] Windows CI compile, 13 tests, service publish, desktop publish and
+  checkpoint artifact confirmed.
 - [ ] Windows desktop render inspection.
 - [ ] UI-kill/service-continuation and reconnect test.
 - [ ] Long-running memory and persistence soak test.
