@@ -1,5 +1,5 @@
-PrecisionLab .NET 10 migration preview
-======================================
+PrecisionLab .NET 10 v0.6.0-beta.1
+==================================
 
 ENGLISH
 -------

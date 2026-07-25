@@ -100,13 +100,70 @@ jobs:
           Copy-Item dotnet/INSTALL_WINDOWS.ps1 artifacts/package/ -Force
           Copy-Item dotnet/UNINSTALL_WINDOWS.ps1 artifacts/package/ -Force
           Copy-Item dotnet/THIRD_PARTY_NOTICES.md artifacts/package/ -Force
-          Compress-Archive artifacts/package/* artifacts/PrecisionLab-dotnet10-preview.zip
+          Copy-Item dotnet/MIGRATION_STATUS.md artifacts/package/ -Force
+          Copy-Item dotnet/ARCHITECTURE.md artifacts/package/ -Force
+          Compress-Archive `
+            artifacts/package/* `
+            artifacts/PrecisionLab-dotnet10-v0.6.0-beta.1-Windows.zip
+      - name: Installed package acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = Resolve-Path "artifacts/PrecisionLab-dotnet10-v0.6.0-beta.1-Windows.zip"
+          $source = Join-Path $env:RUNNER_TEMP "PrecisionLabInstallSource"
+          $dataDirectory = Join-Path $env:RUNNER_TEMP "PrecisionLabInstalledData"
+          $installDirectory = Join-Path $env:LOCALAPPDATA "Programs\PrecisionLab"
+          Expand-Archive $archive $source -Force
+          & (Join-Path $source "INSTALL_WINDOWS.ps1")
+
+          $required = @(
+            "PrecisionLab.Desktop.Wpf.exe",
+            "PrecisionLab.Service.exe",
+            "MIGRATION_STATUS.md",
+            "runtimes\win-x64\native\e_sqlite3.dll"
+          )
+          foreach ($relativePath in $required) {
+            if (-not (Test-Path (Join-Path $installDirectory $relativePath))) {
+              throw "Installed package is missing $relativePath"
+            }
+          }
+
+          $env:PRECISIONLAB_INSTANCE = "ci-installed-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $service = $null
+          try {
+            $service = Start-Process `
+              (Join-Path $installDirectory "PrecisionLab.Service.exe") `
+              -ArgumentList "--data-dir", $dataDirectory `
+              -PassThru
+            Start-Sleep -Seconds 2
+            $desktop = Start-Process `
+              (Join-Path $installDirectory "PrecisionLab.Desktop.Wpf.exe") `
+              -ArgumentList "--headless-smoke" `
+              -Wait `
+              -PassThru
+            if ($desktop.ExitCode -ne 0) {
+              throw "Installed WPF smoke failed: $($desktop.ExitCode)"
+            }
+          }
+          finally {
+            if ($null -ne $service -and -not $service.HasExited) {
+              Stop-Process -Id $service.Id -Force
+            }
+            & (Join-Path $installDirectory "UNINSTALL_WINDOWS.ps1")
+          }
+          if (Test-Path $installDirectory) {
+            throw "Uninstaller did not remove the program directory."
+          }
+          if (-not (Test-Path $dataDirectory)) {
+            throw "Uninstaller removed measurement data."
+          }
+          Write-Host "Verified final ZIP install, native dependencies, installed launch and uninstall."
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: PrecisionLab-dotnet10-preview
+          name: PrecisionLab-dotnet10-v0.6.0-beta.1-Windows
           path: |
-            artifacts/PrecisionLab-dotnet10-preview.zip
+            artifacts/PrecisionLab-dotnet10-v0.6.0-beta.1-Windows.zip
             ${{ runner.temp }}/PrecisionLabIsolatedOutput/*
             dotnet/tests/PrecisionLab.Core.Tests/TestResults/*
           if-no-files-found: warn

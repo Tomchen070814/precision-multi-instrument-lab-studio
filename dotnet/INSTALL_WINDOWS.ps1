@@ -3,9 +3,9 @@ $sourceDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $installDirectory = Join-Path $env:LOCALAPPDATA "Programs\PrecisionLab"
 
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
-Get-ChildItem $sourceDirectory -File |
+Get-ChildItem $sourceDirectory |
     Where-Object { $_.Name -notin @("INSTALL_WINDOWS.ps1", "UNINSTALL_WINDOWS.ps1") } |
-    Copy-Item -Destination $installDirectory -Force
+    Copy-Item -Destination $installDirectory -Recurse -Force
 Copy-Item (Join-Path $sourceDirectory "UNINSTALL_WINDOWS.ps1") $installDirectory -Force
 
 $shell = New-Object -ComObject WScript.Shell
