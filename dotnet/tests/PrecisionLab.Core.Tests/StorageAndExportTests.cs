@@ -8,6 +8,20 @@ namespace PrecisionLab.Core.Tests;
 public sealed class StorageAndExportTests
 {
     [Fact]
+    public async Task DisposingStoreReleasesDatabaseFilesImmediately()
+    {
+        await using var temporary = new TemporaryDirectory();
+        string database = Path.Combine(temporary.Path, "sessions.db");
+        await using (var store = new SqliteSessionStore(database))
+        {
+            await store.InitializeAsync(CancellationToken.None);
+        }
+
+        Directory.Delete(temporary.Path, recursive: true);
+        Assert.False(Directory.Exists(temporary.Path));
+    }
+
+    [Fact]
     public async Task ReopeningDatabaseMarksUnfinishedSessionInterrupted()
     {
         await using var temporary = new TemporaryDirectory();

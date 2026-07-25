@@ -48,6 +48,10 @@ public sealed class SqliteSessionStore : ISessionStore
                 DataSource = DatabasePath,
                 Mode = SqliteOpenMode.ReadWriteCreate,
                 Cache = SqliteCacheMode.Shared,
+                // The service owns one long-lived connection. Pooling provides no
+                // throughput benefit here and would retain a Windows file handle
+                // after disposal, preventing immediate backup/move/delete.
+                Pooling = false,
             }.ToString();
             _connection = new SqliteConnection(connectionString);
             await _connection.OpenAsync(cancellationToken).ConfigureAwait(false);
