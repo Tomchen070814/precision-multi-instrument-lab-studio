@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -352,6 +354,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             StatisticsResult statistics = StatisticsAnalyzer.Describe(values, elapsed);
             LinearFitResult trend = StatisticsAnalyzer.LinearFit(elapsed, values);
             text.AppendLine(
+                CultureInfo.InvariantCulture,
                 $"{channel} · n={statistics.Count:N0} · mean={statistics.Mean:G12} " +
                 $"{snapshot[^1].Unit.Symbol()} · σ={statistics.StandardDeviation:G6} · " +
                 $"RMS={statistics.Rms:G12} · drift={trend.DriftPerHour:G6}/h");
@@ -375,6 +378,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 if (spectrum.Amplitude.Length > 0)
                 {
                     text.AppendLine(
+                        CultureInfo.InvariantCulture,
                         $"    FFT peak={spectrum.Frequency[peak]:G6} Hz / " +
                         $"{spectrum.Amplitude[peak]:G6}; " +
                         $"ASD bins={spectrum.Asd.Length}; Allan points={allan.Tau.Length}");
