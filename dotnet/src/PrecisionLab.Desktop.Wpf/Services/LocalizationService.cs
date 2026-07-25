@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Resources;
+using System.Runtime.CompilerServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace PrecisionLab.Desktop.Wpf.Services;
