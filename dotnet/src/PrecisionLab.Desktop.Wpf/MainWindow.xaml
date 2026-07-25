@@ -1,0 +1,81 @@
+<Window
+    x:Class="PrecisionLab.Desktop.Wpf.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:scottPlot="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+    Title="Precision Multi-Instrument Lab Studio"
+    Width="1440"
+    Height="900"
+    MinWidth="1080"
+    MinHeight="680"
+    Background="{StaticResource WindowBrush}">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <Border
+        Grid.Row="0"
+        Margin="0,0,0,12"
+        Padding="16,12"
+        Background="{StaticResource PanelBrush}"
+        CornerRadius="8">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Left">
+          <TextBlock FontSize="22" FontWeight="SemiBold" Text="Precision Lab · .NET migration" />
+          <TextBlock Margin="0,3,0,0" Foreground="#9DACCA" Text="{Binding ServiceStatus}" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+          <TextBlock HorizontalAlignment="Right" Text="{Binding UiMemoryMb, StringFormat=UI {0:F1} MB}" />
+          <TextBlock HorizontalAlignment="Right" Text="{Binding ServiceMemoryMb, StringFormat=SERVICE {0:F1} MB}" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Row="1" Margin="0,0,0,12">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <ItemsControl ItemsSource="{Binding Channels}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <UniformGrid Columns="3" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border
+                Margin="0,0,10,0"
+                Padding="14"
+                Background="{StaticResource PanelBrush}"
+                CornerRadius="8">
+              <StackPanel>
+                <DockPanel>
+                  <TextBlock FontSize="18" FontWeight="Bold" Text="{Binding Channel, StringFormat=Channel {0}}" />
+                  <TextBlock DockPanel.Dock="Right" Foreground="{StaticResource AccentBrush}" Text="{Binding State}" />
+                </DockPanel>
+                <TextBlock Margin="0,8,0,0" FontSize="16" Text="{Binding LatestReading}" />
+                <TextBlock Margin="0,4,0,0" Foreground="#9DACCA" Text="{Binding Instrument}" />
+                <TextBlock Foreground="#9DACCA" Text="{Binding Resource}" />
+                <TextBlock Foreground="#9DACCA" Text="{Binding SampleCount, StringFormat=Samples: {0:N0}}" />
+                <TextBlock Foreground="#FF7B86" Text="{Binding Error}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <Button Command="{Binding ConnectCommand}" Content="Reconnect" />
+        <Button Command="{Binding StartAllCommand}" Content="Start A+B+C" />
+        <Button Command="{Binding StopAllCommand}" Content="Stop all" />
+      </StackPanel>
+    </Grid>
+
+    <Border Grid.Row="2" Padding="8" Background="White" CornerRadius="8">
+      <scottPlot:WpfPlot x:Name="TrendPlot" />
+    </Border>
+  </Grid>
+</Window>
