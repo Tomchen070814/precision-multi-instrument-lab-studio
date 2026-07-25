@@ -34,7 +34,7 @@ public sealed partial class ChannelViewModel : ObservableObject
     {
         State = snapshot.State.ToString();
         Instrument =
-            $"{snapshot.Model} · {snapshot.Function} · {snapshot.Unit.Symbol()}";
+            $"{snapshot.InstrumentModel} · {snapshot.Function} · {snapshot.Unit.Symbol()}";
         Resource = snapshot.Resource;
         SampleCount = snapshot.SampleCount;
         Error = snapshot.Error;

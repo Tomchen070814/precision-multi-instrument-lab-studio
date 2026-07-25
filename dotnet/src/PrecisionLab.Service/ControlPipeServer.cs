@@ -35,13 +35,7 @@ public sealed partial class ControlPipeServer : BackgroundService
             try
             {
                 await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
-                ControlRequest request = await ControlPipeProtocol
-                    .ReadAsync<ControlRequest>(pipe, stoppingToken)
-                    .ConfigureAwait(false);
-                ControlResponse response = await HandleAsync(request, stoppingToken)
-                    .ConfigureAwait(false);
-                await ControlPipeProtocol.WriteAsync(pipe, response, stoppingToken)
-                    .ConfigureAwait(false);
+                await ServeClientAsync(pipe, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -51,27 +45,59 @@ public sealed partial class ControlPipeServer : BackgroundService
             {
                 LogControlClientDisconnected(_logger, exception);
             }
+        }
+    }
+
+    private async Task ServeClientAsync(
+        NamedPipeServerStream pipe,
+        CancellationToken cancellationToken)
+    {
+        while (pipe.IsConnected && !cancellationToken.IsCancellationRequested)
+        {
+            ControlRequest request;
+            try
+            {
+                request = await ControlPipeProtocol
+                    .ReadAsync<ControlRequest>(pipe, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (EndOfStreamException exception)
+            {
+                LogControlClientDisconnected(_logger, exception);
+                return;
+            }
+            catch (IOException exception)
+            {
+                LogControlClientDisconnected(_logger, exception);
+                return;
+            }
+
+            ControlResponse response;
+            try
+            {
+                response = await HandleAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
+            }
             catch (Exception exception)
             {
                 LogControlRequestFailed(_logger, exception);
-                if (pipe.IsConnected)
-                {
-                    var response = new ControlResponse(
-                        false,
-                        exception.Message,
-                        _coordinator.Snapshot());
-                    try
-                    {
-                        await ControlPipeProtocol.WriteAsync(
-                            pipe,
-                            response,
-                            stoppingToken).ConfigureAwait(false);
-                    }
-                    catch (IOException)
-                    {
-                        // The client has already disconnected.
-                    }
-                }
+                response = new ControlResponse(
+                    false,
+                    exception.Message,
+                    _coordinator.Snapshot());
+            }
+
+            try
+            {
+                await ControlPipeProtocol.WriteAsync(
+                    pipe,
+                    response,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException exception)
+            {
+                LogControlClientDisconnected(_logger, exception);
+                return;
             }
         }
     }

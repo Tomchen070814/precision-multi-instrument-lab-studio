@@ -181,9 +181,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        ServiceMemoryMb = snapshot.WorkingSetBytes / 1_048_576.0;
+        ServiceMemoryMb = snapshot.ServiceWorkingSetBytes / 1_048_576.0;
         ServiceStatus =
-            $"Service PID {snapshot.ProcessId} · protocol {snapshot.ProtocolVersion} · " +
+            $"Service PID {snapshot.ServiceProcessId} · protocol {snapshot.ProtocolVersion} · " +
             $"{snapshot.ServiceVersion}";
         foreach (ChannelSnapshot channelSnapshot in snapshot.Channels)
         {

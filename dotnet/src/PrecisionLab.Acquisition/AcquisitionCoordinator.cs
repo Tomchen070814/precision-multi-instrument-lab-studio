@@ -114,10 +114,10 @@ public sealed class AcquisitionCoordinator : IHostedService
         new(
             ProtocolVersion: 1,
             ServiceVersion: "0.6.0-alpha.1",
-            ServiceStartedUtc,
-            Environment.ProcessId,
-            Environment.WorkingSet,
-            Enum.GetValues<ChannelId>()
+            ServiceStartedUtc: ServiceStartedUtc,
+            ServiceProcessId: Environment.ProcessId,
+            ServiceWorkingSetBytes: Environment.WorkingSet,
+            Channels: Enum.GetValues<ChannelId>()
                 .Select(channel => _channels[channel].Snapshot())
                 .ToArray());
 

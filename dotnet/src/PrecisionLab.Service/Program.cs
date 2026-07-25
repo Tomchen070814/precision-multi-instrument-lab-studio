@@ -19,11 +19,11 @@ builder.Services.AddSingleton<IMeasurementPublisher>(
     provider => provider.GetRequiredService<MeasurementPipeline>());
 builder.Services.AddSingleton<IHostedService>(
     provider => provider.GetRequiredService<MeasurementPipeline>());
-builder.Services.AddSingleton<IInstrumentDriverFactory, DigitalTwinDriverFactory>();
+builder.Services.AddSingleton<IInstrumentDriverFactory, BuiltinInstrumentDriverFactory>();
 builder.Services.AddSingleton<AcquisitionCoordinator>();
 builder.Services.AddSingleton<IHostedService>(
     provider => provider.GetRequiredService<AcquisitionCoordinator>());
-builder.Services.AddHostedService<ControlPipeWorker>();
-builder.Services.AddHostedService<DataPipeWorker>();
+builder.Services.AddHostedService<ControlPipeServer>();
+builder.Services.AddHostedService<DataPipeServer>();
 
 await builder.Build().RunAsync().ConfigureAwait(false);
