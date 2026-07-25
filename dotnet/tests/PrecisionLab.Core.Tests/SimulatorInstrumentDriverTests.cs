@@ -10,7 +10,7 @@ public sealed class SimulatorInstrumentDriverTests
     [InlineData(MeasurementFunction.Resistance4Wire, MeasurementUnit.Ohm)]
     [InlineData(MeasurementFunction.DcCurrent, MeasurementUnit.Ampere)]
     [InlineData(MeasurementFunction.Frequency, MeasurementUnit.Hertz)]
-    public async Task Simulator_preserves_function_units(
+    public async Task SimulatorPreservesFunctionUnits(
         MeasurementFunction function,
         MeasurementUnit expectedUnit)
     {

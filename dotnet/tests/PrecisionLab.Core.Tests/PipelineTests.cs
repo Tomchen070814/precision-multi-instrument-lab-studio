@@ -7,7 +7,7 @@ namespace PrecisionLab.Core.Tests;
 public sealed class PipelineTests
 {
     [Fact]
-    public async Task DisplayPublication_HappensOnlyAfterDurableFlush()
+    public async Task DisplayPublicationHappensOnlyAfterDurableFlush()
     {
         var sink = new TrackingSink();
         var hub = new MeasurementHub();

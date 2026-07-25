@@ -6,7 +6,7 @@ namespace PrecisionLab.Core.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
-    public async Task ControlFrame_RoundTripsWithoutStreamReaderBuffering()
+    public async Task ControlFrameRoundTripsWithoutStreamReaderBuffering()
     {
         var expected = new ControlRequest(
             ControlOperations.Start,
@@ -27,7 +27,7 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public async Task BinaryMeasurementFrame_RoundTrips()
+    public async Task BinaryMeasurementFrameRoundTrips()
     {
         var expected = new Measurement(
             ChannelId.C,

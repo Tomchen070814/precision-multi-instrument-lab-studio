@@ -5,14 +5,14 @@ namespace PrecisionLab.Core.Tests;
 public sealed class InstrumentCatalogTests
 {
     [Fact]
-    public void Catalog_preserves_all_fourteen_v052_models()
+    public void CatalogPreservesAllFourteenV052Models()
     {
         Assert.Equal(14, InstrumentCatalog.All.Count);
         Assert.Equal(14, InstrumentCatalog.All.Select(item => item.Model).Distinct().Count());
     }
 
     [Fact]
-    public void Legacy_protocols_are_not_misclassified_as_scpi()
+    public void LegacyProtocolsAreNotMisclassifiedAsScpi()
     {
         Assert.Equal(
             InstrumentProtocol.HpIb3458A,

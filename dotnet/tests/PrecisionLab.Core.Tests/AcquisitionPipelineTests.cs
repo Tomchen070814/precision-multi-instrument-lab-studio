@@ -7,7 +7,7 @@ namespace PrecisionLab.Core.Tests;
 public sealed class AcquisitionPipelineTests
 {
     [Fact]
-    public async Task Durable_sink_runs_before_display_broadcast()
+    public async Task DurableSinkRunsBeforeDisplayBroadcast()
     {
         var sink = new RecordingSink();
         var hub = new MeasurementHub();

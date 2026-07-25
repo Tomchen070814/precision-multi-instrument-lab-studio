@@ -8,7 +8,7 @@ namespace PrecisionLab.Core.Tests;
 public sealed class AcquisitionCoordinatorTests
 {
     [Fact]
-    public async Task Three_simulated_channels_arm_and_publish_independently()
+    public async Task ThreeSimulatedChannelsArmAndPublishIndependently()
     {
         var sink = new RecordingSink();
         var hub = new MeasurementHub();

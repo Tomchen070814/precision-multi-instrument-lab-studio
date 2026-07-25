@@ -6,7 +6,7 @@ namespace PrecisionLab.Core.Tests;
 public sealed class DataFrameCodecTests
 {
     [Fact]
-    public async Task Measurement_frame_round_trips_without_numeric_loss()
+    public async Task MeasurementFrameRoundTripsWithoutNumericLoss()
     {
         var expected = new Measurement(
             ChannelId.C,
@@ -31,7 +31,7 @@ public sealed class DataFrameCodecTests
     }
 
     [Fact]
-    public async Task Measurement_frame_preserves_missing_temperature()
+    public async Task MeasurementFramePreservesMissingTemperature()
     {
         var expected = new Measurement(
             ChannelId.A,
