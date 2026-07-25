@@ -1,3 +1,4 @@
+using System.IO;
 using System.IO.Pipes;
 using PrecisionLab.Contracts;
 using PrecisionLab.Domain;

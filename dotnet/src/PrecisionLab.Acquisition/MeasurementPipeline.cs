@@ -17,7 +17,7 @@ public interface IMeasurementSink : IAsyncDisposable
     ValueTask FlushAsync(CancellationToken cancellationToken);
 }
 
-public sealed class MeasurementPipeline : BackgroundService, IMeasurementPublisher
+public sealed partial class MeasurementPipeline : BackgroundService, IMeasurementPublisher
 {
     private readonly Channel<Measurement> _ingress;
     private readonly IMeasurementSink _sink;
@@ -53,7 +53,9 @@ public sealed class MeasurementPipeline : BackgroundService, IMeasurementPublish
     {
         try
         {
-            await foreach (Measurement measurement in _ingress.Reader.ReadAllAsync())
+            // StopAsync completes the writer so this loop drains every accepted sample.
+            await foreach (Measurement measurement in
+                           _ingress.Reader.ReadAllAsync(CancellationToken.None))
             {
                 await _sink.WriteAsync(
                     measurement,
@@ -66,9 +68,7 @@ public sealed class MeasurementPipeline : BackgroundService, IMeasurementPublish
         }
         catch (Exception exception)
         {
-            _logger.LogCritical(
-                exception,
-                "The durable measurement pipeline stopped unexpectedly.");
+            LogPipelineStopped(_logger, exception);
             throw;
         }
         finally
@@ -83,4 +83,12 @@ public sealed class MeasurementPipeline : BackgroundService, IMeasurementPublish
         _ingress.Writer.TryComplete();
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    [LoggerMessage(
+        EventId = 20,
+        Level = LogLevel.Critical,
+        Message = "The durable measurement pipeline stopped unexpectedly.")]
+    private static partial void LogPipelineStopped(
+        ILogger logger,
+        Exception exception);
 }

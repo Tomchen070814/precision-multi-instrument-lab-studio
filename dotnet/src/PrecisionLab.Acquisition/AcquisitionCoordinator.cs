@@ -5,9 +5,9 @@ using PrecisionLab.Drivers.Abstractions;
 
 namespace PrecisionLab.Acquisition;
 
-public sealed class AcquisitionCoordinator : IHostedService
+public sealed class AcquisitionCoordinator : IHostedService, IDisposable
 {
-    private readonly IReadOnlyDictionary<ChannelId, ChannelRuntime> _channels;
+    private readonly Dictionary<ChannelId, ChannelRuntime> _channels;
     private readonly Dictionary<ChannelId, AcquisitionSettings> _settings;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
 
@@ -60,7 +60,8 @@ public sealed class AcquisitionCoordinator : IHostedService
             foreach (ChannelId channel in selected)
             {
                 if (settings is not null &&
-                    settings.TryGetValue(channel, out AcquisitionSettings configured))
+                    settings.TryGetValue(channel, out AcquisitionSettings? configured) &&
+                    configured is not null)
                 {
                     _settings[channel] = configured.Validate();
                 }
@@ -123,6 +124,8 @@ public sealed class AcquisitionCoordinator : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) =>
         StopChannelsAsync(Enum.GetValues<ChannelId>(), cancellationToken);
+
+    public void Dispose() => _operationLock.Dispose();
 
     private static AcquisitionSettings DefaultSettings(
         InstrumentModel model,
