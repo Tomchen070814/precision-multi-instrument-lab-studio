@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+  </ItemGroup>
+</Project>

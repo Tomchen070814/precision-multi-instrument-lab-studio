@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+    <Project Path="src/PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
+    <Project Path="src/PrecisionLab.Drivers.Abstractions/PrecisionLab.Drivers.Abstractions.csproj" />
+    <Project Path="src/PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+    <Project Path="src/PrecisionLab.Drivers.Visa/PrecisionLab.Drivers.Visa.csproj" />
+    <Project Path="src/PrecisionLab.Acquisition/PrecisionLab.Acquisition.csproj" />
+    <Project Path="src/PrecisionLab.Storage/PrecisionLab.Storage.csproj" />
+    <Project Path="src/PrecisionLab.Analysis/PrecisionLab.Analysis.csproj" />
+    <Project Path="src/PrecisionLab.Export/PrecisionLab.Export.csproj" />
+    <Project Path="src/PrecisionLab.Service/PrecisionLab.Service.csproj" />
+    <Project Path="src/PrecisionLab.Desktop.Wpf/PrecisionLab.Desktop.Wpf.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PrecisionLab.Core.Tests/PrecisionLab.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/PrecisionLab.Smoke/PrecisionLab.Smoke.csproj" />
+  </Folder>
+</Solution>

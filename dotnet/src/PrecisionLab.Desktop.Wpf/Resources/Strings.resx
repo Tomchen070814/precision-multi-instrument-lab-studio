@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="AppTitle" xml:space="preserve"><value>Precision Multi-Instrument Lab Studio</value></data>
+  <data name="Acquisition" xml:space="preserve"><value>Acquisition</value></data>
+  <data name="Trend" xml:space="preserve"><value>Trend</value></data>
+  <data name="Analysis" xml:space="preserve"><value>Analysis</value></data>
+  <data name="Sessions" xml:space="preserve"><value>Sessions</value></data>
+  <data name="Reconnect" xml:space="preserve"><value>Reconnect</value></data>
+  <data name="Scan" xml:space="preserve"><value>Scan VISA</value></data>
+  <data name="Start" xml:space="preserve"><value>Start</value></data>
+  <data name="Stop" xml:space="preserve"><value>Stop</value></data>
+  <data name="StartSelected" xml:space="preserve"><value>Start selected</value></data>
+  <data name="StopAll" xml:space="preserve"><value>Stop all</value></data>
+  <data name="Instrument" xml:space="preserve"><value>Instrument</value></data>
+  <data name="Channel" xml:space="preserve"><value>Channel</value></data>
+  <data name="Model" xml:space="preserve"><value>Model</value></data>
+  <data name="Resource" xml:space="preserve"><value>VISA resource</value></data>
+  <data name="Function" xml:space="preserve"><value>Function</value></data>
+  <data name="Range" xml:space="preserve"><value>Range</value></data>
+  <data name="Nplc" xml:space="preserve"><value>NPLC</value></data>
+  <data name="Digits" xml:space="preserve"><value>Digits</value></data>
+  <data name="Autozero" xml:space="preserve"><value>Autozero</value></data>
+  <data name="IntervalMs" xml:space="preserve"><value>Interval (ms)</value></data>
+  <data name="MaxSamples" xml:space="preserve"><value>Max samples (blank = continuous)</value></data>
+  <data name="BurstAperture" xml:space="preserve"><value>Burst aperture (µs)</value></data>
+  <data name="Durability" xml:space="preserve"><value>Durability</value></data>
+  <data name="Committed" xml:space="preserve"><value>Committed</value></data>
+  <data name="Export" xml:space="preserve"><value>Export CSV</value></data>
+  <data name="Diagnostics" xml:space="preserve"><value>Diagnostic ZIP</value></data>
+  <data name="Refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="Statistics" xml:space="preserve"><value>Statistics</value></data>
+  <data name="Spectrum" xml:space="preserve"><value>FFT / ASD</value></data>
+  <data name="Stability" xml:space="preserve"><value>Allan / drift</value></data>
+  <data name="AnalysisDescription" xml:space="preserve"><value>Statistics · FFT amplitude · ASD · Allan deviation · drift</value></data>
+  <data name="StartUtc" xml:space="preserve"><value>Start UTC</value></data>
+  <data name="Samples" xml:space="preserve"><value>Samples</value></data>
+  <data name="Status" xml:space="preserve"><value>Status</value></data>
+  <data name="Error" xml:space="preserve"><value>Error</value></data>
+  <data name="Language" xml:space="preserve"><value>中文</value></data>
+  <data name="ServiceDisconnected" xml:space="preserve"><value>Service disconnected</value></data>
+</root>

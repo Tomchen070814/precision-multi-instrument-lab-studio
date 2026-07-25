@@ -1,0 +1,390 @@
+<Window
+    x:Class="PrecisionLab.Desktop.Wpf.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:scottPlot="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+    Title="{Binding Localization[AppTitle]}"
+    Width="1480"
+    Height="920"
+    MinWidth="1120"
+    MinHeight="720"
+    Background="{StaticResource WindowBrush}">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Border
+        Grid.Row="0"
+        Margin="0,0,0,12"
+        Padding="16,12"
+        Background="{StaticResource PanelBrush}"
+        CornerRadius="8">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Left">
+          <TextBlock
+              FontSize="22"
+              FontWeight="SemiBold"
+              Text="{Binding Localization[AppTitle]}" />
+          <TextBlock
+              Margin="0,3,0,0"
+              Foreground="#9DACCA"
+              Text="{Binding ServiceStatus}" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button
+              Command="{Binding ConnectCommand}"
+              Content="{Binding Localization[Reconnect]}" />
+          <Button
+              Command="{Binding ScanResourcesCommand}"
+              Content="{Binding Localization[Scan]}" />
+          <Button
+              Command="{Binding ToggleLanguageCommand}"
+              Content="{Binding Localization[Language]}" />
+          <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+            <TextBlock
+                HorizontalAlignment="Right"
+                Foreground="{StaticResource AccentBrush}"
+                Text="{Binding SystemMemoryText}" />
+            <TextBlock
+                HorizontalAlignment="Right"
+                Text="{Binding UiMemoryMb, StringFormat=UI {0:F1} MB}" />
+            <TextBlock
+                HorizontalAlignment="Right"
+                Text="{Binding ServiceMemoryMb, StringFormat=SERVICE {0:F1} MB}" />
+          </StackPanel>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <TabControl Grid.Row="1">
+      <TabItem Header="{Binding Localization[Acquisition]}">
+        <Grid Margin="10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <ItemsControl ItemsSource="{Binding Channels}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <UniformGrid Columns="3" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border
+                    Margin="5"
+                    Padding="14"
+                    Background="{StaticResource PanelBrush}"
+                    CornerRadius="8">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel
+                        Grid.Row="0"
+                        Grid.ColumnSpan="2"
+                        Margin="0,0,0,12"
+                        Orientation="Horizontal">
+                      <CheckBox IsChecked="{Binding IsSelected}" />
+                      <TextBlock
+                          Margin="5,0,0,0"
+                          FontSize="18"
+                          FontWeight="Bold"
+                          Text="{Binding Channel, StringFormat=Channel {0}}" />
+                    </StackPanel>
+                    <TextBlock
+                        Grid.Row="1"
+                        Grid.ColumnSpan="2"
+                        Margin="0,0,0,10"
+                        FontSize="17"
+                        Foreground="{StaticResource AccentBrush}"
+                        Text="{Binding LatestReading}" />
+
+                    <TextBlock
+                        Grid.Row="2"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Model], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <ComboBox
+                        Grid.Row="2"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        ItemsSource="{Binding InstrumentModels}"
+                        SelectedItem="{Binding InstrumentModel}" />
+                    <TextBlock
+                        Grid.Row="3"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Resource], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="3"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding Resource, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock
+                        Grid.Row="4"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Function], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <ComboBox
+                        Grid.Row="4"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        ItemsSource="{Binding Functions}"
+                        SelectedItem="{Binding Function}" />
+                    <TextBlock
+                        Grid.Row="5"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Range], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="5"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding MeasurementRange}" />
+                    <TextBlock
+                        Grid.Row="6"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Nplc], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="6"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding Nplc}" />
+                    <TextBlock
+                        Grid.Row="7"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Digits], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="7"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding Digits}" />
+                    <TextBlock
+                        Grid.Row="8"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Autozero], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <ComboBox
+                        Grid.Row="8"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        ItemsSource="{Binding AutozeroModes}"
+                        SelectedItem="{Binding Autozero}" />
+                    <TextBlock
+                        Grid.Row="9"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[IntervalMs], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="9"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding IntervalMilliseconds}" />
+                    <TextBlock
+                        Grid.Row="10"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[MaxSamples], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="10"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding MaxSamples}" />
+                    <TextBlock
+                        Grid.Row="11"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[BurstAperture], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBox
+                        Grid.Row="11"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        Text="{Binding BurstApertureMicroseconds}" />
+                    <TextBlock
+                        Grid.Row="12"
+                        Margin="0,5,8,5"
+                        Text="{Binding DataContext.Localization[Durability], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <ComboBox
+                        Grid.Row="12"
+                        Grid.Column="1"
+                        Margin="0,3"
+                        ItemsSource="{Binding DurabilityModes}"
+                        SelectedItem="{Binding Durability}" />
+                    <StackPanel
+                        Grid.Row="13"
+                        Grid.ColumnSpan="2"
+                        Margin="0,10,0,0">
+                      <TextBlock Foreground="#9DACCA" Text="{Binding State}" />
+                      <TextBlock
+                          Foreground="#9DACCA"
+                          Text="{Binding SampleCount, StringFormat=Committed: {0:N0}}" />
+                      <TextBlock
+                          Foreground="#FF7B86"
+                          Text="{Binding Error}"
+                          TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <StackPanel
+              Grid.Row="1"
+              HorizontalAlignment="Right"
+              Orientation="Horizontal">
+            <Button
+                Command="{Binding StartSelectedCommand}"
+                Content="{Binding Localization[StartSelected]}" />
+            <Button
+                Command="{Binding StopAllCommand}"
+                Content="{Binding Localization[StopAll]}" />
+            <Button
+                Command="{Binding ExportDiagnosticsCommand}"
+                Content="{Binding Localization[Diagnostics]}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="{Binding Localization[Trend]}">
+        <Border Margin="10" Padding="8" Background="White" CornerRadius="8">
+          <scottPlot:WpfPlot x:Name="TrendPlot" />
+        </Border>
+      </TabItem>
+
+      <TabItem Header="{Binding Localization[Analysis]}">
+        <Grid Margin="14">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <TextBlock
+              FontSize="18"
+              FontWeight="SemiBold"
+              Text="{Binding Localization[AnalysisDescription]}" />
+          <TextBox
+              Grid.Row="1"
+              Margin="0,12,0,0"
+              Padding="14"
+              AcceptsReturn="True"
+              Background="{StaticResource PanelBrush}"
+              FontFamily="Consolas"
+              IsReadOnly="True"
+              Text="{Binding AnalysisText}"
+              TextWrapping="Wrap"
+              VerticalScrollBarVisibility="Auto" />
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="{Binding Localization[Sessions]}">
+        <Grid Margin="14">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <ListBox
+              ItemsSource="{Binding Sessions}"
+              SelectedItem="{Binding SelectedSession}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="8" Width="1260">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="110" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Grid.Column="0">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[StartUtc], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding StartedUtc}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Channel], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding Channel}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Instrument], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding InstrumentModel}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="3">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Function], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding Function}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="4">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Resource], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding Resource}" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="5">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Samples], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding SampleCount}" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="6">
+                    <TextBlock
+                        Foreground="#6B7890"
+                        Text="{Binding DataContext.Localization[Status], RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock Text="{Binding Status}" />
+                    <TextBlock Foreground="#B42536" Text="{Binding Error}" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel
+              Grid.Row="1"
+              HorizontalAlignment="Right"
+              Orientation="Horizontal">
+            <Button
+                Command="{Binding RefreshSessionsCommand}"
+                Content="{Binding Localization[Refresh]}" />
+            <Button
+                Command="{Binding ExportSelectedSessionCommand}"
+                Content="{Binding Localization[Export]}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+    </TabControl>
+
+    <ItemsControl Grid.Row="2" Margin="4,10,4,0" ItemsSource="{Binding DiscoveredResources}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <WrapPanel />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Border Margin="0,0,8,0" Padding="8,3" Background="#29344C" CornerRadius="4">
+            <TextBlock Text="{Binding}" />
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </Grid>
+</Window>

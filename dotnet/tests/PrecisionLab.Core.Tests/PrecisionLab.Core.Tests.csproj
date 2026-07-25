@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/PrecisionLab.Acquisition/PrecisionLab.Acquisition.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Analysis/PrecisionLab.Analysis.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Abstractions/PrecisionLab.Drivers.Abstractions.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Visa/PrecisionLab.Drivers.Visa.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Export/PrecisionLab.Export.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Storage/PrecisionLab.Storage.csproj" />
+  </ItemGroup>
+</Project>
