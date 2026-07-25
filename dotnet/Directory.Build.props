@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <VersionPrefix>0.6.0</VersionPrefix>
+    <VersionSuffix>alpha.1</VersionSuffix>
+    <Authors>Louis</Authors>
+    <RepositoryUrl>https://github.com/Tomchen070814/precision-multi-instrument-lab-studio</RepositoryUrl>
+  </PropertyGroup>
+</Project>

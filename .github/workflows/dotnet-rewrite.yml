@@ -1,0 +1,46 @@
+name: dotnet-rewrite
+
+on:
+  push:
+    branches:
+      - rewrite/dotnet10
+    paths:
+      - "dotnet/**"
+      - ".github/workflows/dotnet-rewrite.yml"
+  pull_request:
+    paths:
+      - "dotnet/**"
+      - ".github/workflows/dotnet-rewrite.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore
+        run: dotnet restore dotnet/PrecisionLab.slnx
+      - name: Build
+        run: dotnet build dotnet/PrecisionLab.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+      - name: Test
+        run: dotnet test dotnet/PrecisionLab.slnx --configuration Release --no-build
+      - name: Publish service
+        run: dotnet publish dotnet/src/PrecisionLab.Service/PrecisionLab.Service.csproj --configuration Release --no-build --output artifacts/service
+      - name: Publish desktop
+        run: dotnet publish dotnet/src/PrecisionLab.Desktop.Wpf/PrecisionLab.Desktop.Wpf.csproj --configuration Release --no-build --output artifacts/desktop
+      - name: Assemble checkpoint
+        shell: pwsh
+        run: |
+          Copy-Item artifacts/service/* artifacts/desktop/ -Recurse -Force
+          Compress-Archive artifacts/desktop/* artifacts/PrecisionLab-dotnet10-phase1.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PrecisionLab-dotnet10-phase1
+          path: artifacts/PrecisionLab-dotnet10-phase1.zip
+          if-no-files-found: error

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/PrecisionLab.Acquisition/PrecisionLab.Acquisition.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Domain/PrecisionLab.Domain.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Abstractions/PrecisionLab.Drivers.Abstractions.csproj" />
+    <ProjectReference Include="../../src/PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+  </ItemGroup>
+</Project>
