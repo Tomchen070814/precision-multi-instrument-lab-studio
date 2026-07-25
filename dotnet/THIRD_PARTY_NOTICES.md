@@ -10,6 +10,7 @@ consumed as version-pinned NuGet packages.
 | IviFoundation.Visa | 8.0.2 | IVI Foundation License Agreement | vendor-neutral VISA.NET API |
 | MathNet.Numerics | 5.0.0 | MIT | FFT implementation |
 | Microsoft.Data.Sqlite | 10.0.10 | MIT | durable SQLite session store |
+| SQLitePCLRaw.bundle_e_sqlite3 | 2.1.12 | Apache-2.0 | patched native SQLite bundle |
 | Microsoft.Extensions.Hosting | 10.0.10 | MIT | service lifetime, DI, logging |
 | xunit.v3 | 3.2.2 | Apache-2.0 | automated tests |
 | Microsoft.NET.Test.Sdk | 18.8.1 | MIT | test discovery and execution |
