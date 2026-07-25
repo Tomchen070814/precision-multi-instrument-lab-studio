@@ -38,6 +38,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item artifacts/service/* artifacts/desktop/ -Recurse -Force
+          Copy-Item dotnet/README_PHASE1_ARTIFACT.txt artifacts/desktop/ -Force
           Compress-Archive artifacts/desktop/* artifacts/PrecisionLab-dotnet10-phase1.zip
       - uses: actions/upload-artifact@v4
         with:
