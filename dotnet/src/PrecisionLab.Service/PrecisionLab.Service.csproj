@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../PrecisionLab.Acquisition/PrecisionLab.Acquisition.csproj" />
+    <ProjectReference Include="../PrecisionLab.Contracts/PrecisionLab.Contracts.csproj" />
+    <ProjectReference Include="../PrecisionLab.Drivers.Builtin/PrecisionLab.Drivers.Builtin.csproj" />
+  </ItemGroup>
+</Project>
