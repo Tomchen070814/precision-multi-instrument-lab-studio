@@ -48,6 +48,11 @@ class InstrumentControlPanel(QtWidgets.QWidget):
 
         self.resource_combo = QtWidgets.QComboBox()
         self.resource_combo.setEditable(True)
+        # The shared combo style reserves 46 px for padding and its arrow.
+        # Give the editable VISA address that space without reducing its font.
+        self.resource_combo.setStyleSheet(
+            "QComboBox { padding: 7px 1px; }QComboBox::drop-down { width: 18px; }"
+        )
         self.resource_combo.addItem(self.default_resource)
         outer.addWidget(self.resource_combo)
         resource_row = QtWidgets.QHBoxLayout()
@@ -152,6 +157,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
             self.function_combo,
             self.range_combo,
             self.precision_length_combo,
+            self.resource_combo,
         ):
             combo.currentTextChanged.connect(combo.setToolTip)
             combo.setToolTip(combo.currentText())

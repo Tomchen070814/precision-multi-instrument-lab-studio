@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -211,7 +212,26 @@ def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
         .fontMetrics()
         .horizontalAdvance(panel.resource_name)
         <= panel.resource_combo.lineEdit().contentsRect().width()
+    ), json.dumps(
+        {
+            "resource": panel.resource_name,
+            "combo_width": panel.resource_combo.width(),
+            "editor_rect": panel.resource_combo.lineEdit().geometry().getRect(),
+            "editor_contents": panel.resource_combo.lineEdit().contentsRect().getRect(),
+            "font": panel.resource_combo.lineEdit().font().key(),
+            "glyph_width": panel.resource_combo.lineEdit()
+            .fontMetrics()
+            .horizontalAdvance(panel.resource_name),
+        },
+        indent=2,
     )
+    assert panel.resource_combo.lineEdit().font().pixelSize() == 13
+    assert panel.resource_combo.lineEdit().contentsRect().width() >= 16 * 13
+    assert panel.resource_combo.toolTip() == panel.resource_name
+    long_resource = "TCPIP0::192.168.100.123::5025::SOCKET"
+    panel.set_resources([long_resource], selected_resource=long_resource)
+    assert panel.resource_name == long_resource
+    assert panel.resource_combo.toolTip() == long_resource
     assert panel.model_combo.toolTip() == panel.model_combo.currentText()
     assert (
         panel.precision_length_combo.toolTip()

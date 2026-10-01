@@ -33,8 +33,8 @@ jobs:
         run: |
           # Exercise native Windows font/layout behavior first so a regression
           # fails promptly, while keeping every test in the full run exactly once.
-          $remainingTests = Get-ChildItem tests/test_*.py | Where-Object { $_.Name -ne 'test_ui_lifecycle.py' } | Select-Object -ExpandProperty FullName
-          python -m pytest -q -x tests/test_ui_lifecycle.py $remainingTests
+          $remainingTests = Get-ChildItem tests/test_*.py | Where-Object { $_.Name -notin @('test_instrument_panel.py', 'test_ui_lifecycle.py') } | Select-Object -ExpandProperty FullName
+          python -m pytest -q -x tests/test_instrument_panel.py tests/test_ui_lifecycle.py $remainingTests
       - name: Build Windows application
         if: matrix.python == '3.11'
         run: python -m PyInstaller --noconfirm --clean 3458A_Lab_Studio.spec
