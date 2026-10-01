@@ -426,16 +426,16 @@ def test_any_pair_can_be_selected_for_synchronized_start(app):
     window.sync_channel_checks["B"].setChecked(False)
     window.sync_channel_checks["C"].setChecked(True)
     assert window.sync_channels == ("A", "C")
-    assert window.start_both_button.text() == "Synchronized start A+C"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start A+C"
 
     window.sync_channel_checks["A"].setChecked(False)
     window.sync_channel_checks["B"].setChecked(True)
     assert window.sync_channels == ("B", "C")
-    assert window.start_both_button.text() == "Synchronized start B+C"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start B+C"
 
     window.channel_c_enabled.setChecked(False)
     assert window.sync_channels == ("B",)
-    assert window.start_both_button.text() == "Start B"
+    assert " ".join(window.start_both_button.text().split()) == "Start B"
     assert not window.sync_channel_checks["C"].isChecked()
 
     window.close()
@@ -477,11 +477,11 @@ def test_language_switch_updates_main_and_instrument_controls(app):
     english_index = window.language_combo.findData("en")
     window.language_combo.setCurrentIndex(english_index)
 
-    assert window.stop_all_button.text() == "Stop all"
+    assert " ".join(window.stop_all_button.text().split()) == "Stop all"
     assert " ".join(window.import_button.text().split()) == "Import to selected"
     assert window.panels["A"].resource_refresh.text() == "Scan"
     assert window.panels["A"].start_button.text() == "Start 3458A A"
-    assert window.start_both_button.text() == "Synchronized start A+B"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start A+B"
     assert (
         " ".join(window.export_diagnostic_button.text().split()) == "Export diagnostics"
     )

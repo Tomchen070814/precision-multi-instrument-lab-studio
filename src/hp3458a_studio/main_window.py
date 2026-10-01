@@ -148,6 +148,56 @@ class PrecisionValueLabel(QtWidgets.QLabel):
             self._fitting = False
 
 
+class WrappedActionButton(QtWidgets.QPushButton):
+    """Wrap the complete action label using its resolved native text metrics."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self._canonical_text = text
+        self._wrapping = False
+        self.setToolTip(text)
+
+    def setText(self, text: str) -> None:
+        self._canonical_text = text
+        self.setToolTip(text)
+        self._fit_text()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_text()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QtCore.QEvent.Type.FontChange,
+            QtCore.QEvent.Type.StyleChange,
+        ):
+            self._fit_text()
+
+    def _fit_text(self) -> None:
+        if not hasattr(self, "_canonical_text") or self._wrapping:
+            return
+        self._wrapping = True
+        try:
+            self.ensurePolished()
+            super().setText(self._canonical_text)
+            metrics = self.fontMetrics()
+            inset = max(
+                0,
+                self.sizeHint().width()
+                - metrics.horizontalAdvance(self._canonical_text),
+            )
+            rendered = MainWindow._wrap_control_text(
+                self._canonical_text,
+                metrics,
+                max(1, self.width() - inset),
+                break_long_words=False,
+            )
+            super().setText(rendered)
+        finally:
+            self._wrapping = False
+
+
 class AnalysisTabWidget(QtWidgets.QTabWidget):
     """Let the center layout allocate the explicitly fitted page height."""
 
@@ -498,9 +548,9 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(sync_selector)
 
         group_buttons = QtWidgets.QGridLayout()
-        self.start_both_button = QtWidgets.QPushButton("同步启动 A + B")
+        self.start_both_button = WrappedActionButton("同步启动 A + B")
         self.start_both_button.setObjectName("primary")
-        self.stop_all_button = QtWidgets.QPushButton("停止全部")
+        self.stop_all_button = WrappedActionButton("停止全部")
         self.stop_all_button.setObjectName("danger")
         group_buttons.addWidget(self.start_both_button, 0, 0)
         group_buttons.addWidget(self.stop_all_button, 1, 0)

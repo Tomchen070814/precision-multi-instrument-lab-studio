@@ -1081,15 +1081,58 @@ def test_full_sync_start_label_and_stop_button_fit_narrow_sidebar(window, style_
         window.show()
         QtWidgets.QApplication.processEvents()
         start, stop = window.start_both_button, window.stop_all_button
-        assert start.text() == "Synchronized start A+B+C"
+        assert " ".join(start.text().split()) == "Synchronized start A+B+C"
+        assert start.toolTip() == "Synchronized start A+B+C"
         for button in (start, stop):
             assert button.width() >= button.sizeHint().width(), json.dumps(
+                _control_size_diagnostics(button), indent=2
+            )
+            assert button.height() >= button.sizeHint().height(), json.dumps(
                 _control_size_diagnostics(button), indent=2
             )
             assert button.parentWidget().rect().contains(button.geometry())
         assert not start.geometry().intersects(stop.geometry())
     finally:
         QtWidgets.QApplication.setStyle(previous_style)
+
+
+def test_sync_action_wrap_regenerates_complete_text_after_native_font_and_resize(
+    window,
+):
+    window.channel_c_enabled.setChecked(True)
+    for check in window.sync_channel_checks.values():
+        check.setChecked(True)
+    window.resize(1180, 720)
+    window.show()
+    button = window.start_both_button
+    button.setStyleSheet("font-family: 'Courier New'; font-size: 20px;")
+    QtWidgets.QApplication.processEvents()
+    assert "\n" in button.text()
+    assert " ".join(button.text().split()) == button.toolTip()
+    assert button.toolTip() == "Synchronized start A+B+C"
+    assert button.font().pixelSize() == 20
+    for text in ("Synchronized start A+C", "Start C", "Synchronized start A+B+C"):
+        button.setText(text)
+        QtWidgets.QApplication.processEvents()
+        assert " ".join(button.text().split()) == text
+        assert button.toolTip() == text
+        assert button.width() >= button.sizeHint().width(), json.dumps(
+            _control_size_diagnostics(button), indent=2
+        )
+        assert button.height() >= button.sizeHint().height(), json.dumps(
+            _control_size_diagnostics(button), indent=2
+        )
+    button.resize(600, button.height())
+    assert button.text() == "Synchronized start A+B+C"
+    button.resize(271, button.height())
+    assert "\n" in button.text()
+    assert " ".join(button.text().split()) == button.toolTip()
+    assert button.width() >= button.sizeHint().width(), json.dumps(
+        _control_size_diagnostics(button), indent=2
+    )
+    assert button.height() >= button.sizeHint().height(), json.dumps(
+        _control_size_diagnostics(button), indent=2
+    )
 
 
 @pytest.mark.parametrize("with_recovery", [False, True])
