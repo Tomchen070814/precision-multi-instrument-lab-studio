@@ -189,6 +189,24 @@ def _capture_ui_evidence(window, demo, report_path: Path, report: dict) -> None:
                 "tabs_top": tabs_top,
                 "overlap_px": overlap,
             }
+            scroll = window.dashboard_scroll
+            if callable(getattr(scroll, "viewport", None)) and callable(
+                getattr(scroll, "widget", None)
+            ):
+                content = scroll.widget()
+                if content is not None:
+                    viewport = scroll.viewport()
+                    fits = content.width() <= viewport.width()
+                    report["dashboard_layout"].update(
+                        content_rect=widget_rect(content),
+                        viewport_rect=widget_rect(viewport),
+                        content_fits_width=fits,
+                    )
+                    if not fits:
+                        report["failure_reasons"].append(
+                            "Dashboard content is clipped horizontally: "
+                            f"content={content.width()}px, viewport={viewport.width()}px"
+                        )
             if overlap:
                 report["failure_reasons"].append(
                     f"Dashboard overlaps analysis tabs by {overlap}px: "

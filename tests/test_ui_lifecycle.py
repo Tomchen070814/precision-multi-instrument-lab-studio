@@ -915,6 +915,15 @@ def _assert_center_dashboard_allocation(window):
         "center": window.center_panel.size().toTuple(),
         "dashboard_scroll": scroll.geometry().getRect(),
         "dashboard_content": scroll.widget().geometry().getRect(),
+        "dashboard_minimum": scroll.widget().minimumSize().toTuple(),
+        "readout_minimums": {
+            channel: card.minimumSizeHint().toTuple()
+            for channel, card in window.readout_cards.items()
+        },
+        "readout_states": {
+            channel: _control_size_diagnostics(labels["state"])
+            for channel, labels in window.readouts.items()
+        },
         "tabs": tabs.geometry().getRect(),
         "tabs_minimum": tabs.minimumHeight(),
         "tabs_height_for_width": tabs.heightForWidth(tabs.width()),
@@ -925,6 +934,9 @@ def _assert_center_dashboard_allocation(window):
         < tabs.geometry().top()
     ), json.dumps(diagnostics, indent=2)
     assert window.trend_plot.viewport().height() >= 120, json.dumps(
+        diagnostics, indent=2
+    )
+    assert scroll.widget().width() <= scroll.viewport().width(), json.dumps(
         diagnostics, indent=2
     )
     if scroll.verticalScrollBar().maximum() == 0:
@@ -1022,6 +1034,60 @@ def test_dashboard_stays_separate_while_samples_and_finalization_resize_text(
         for _ in range(4):
             QtWidgets.QApplication.processEvents()
             _assert_center_dashboard_allocation(window)
+    finally:
+        QtWidgets.QApplication.setStyle(previous_style)
+
+
+@pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
+def test_long_native_readout_statuses_wrap_without_widening_dashboard(
+    window, style_name
+):
+    previous_style = QtWidgets.QApplication.style().objectName()
+    try:
+        QtWidgets.QApplication.setStyle(style_name)
+        window.resize(1180, 749)
+        window.show()
+        for labels in window.readouts.values():
+            labels["state"].setStyleSheet("font-family: 'Arial'; font-size: 18px;")
+        for status in ("等待同步", "正在重连", "采集错误", "已完成"):
+            for channel in window.CHANNELS:
+                window._set_channel_state(channel, status)
+            for _ in range(3):
+                QtWidgets.QApplication.processEvents()
+                _assert_center_dashboard_allocation(window)
+                for channel, readout in window.readouts.items():
+                    state, tag = readout["state"], readout["tag"]
+                    card = window.readout_cards[channel]
+                    assert state.text() == main_window_module.tr("en", status)
+                    assert card.rect().contains(state.geometry())
+                    assert not state.geometry().intersects(tag.geometry())
+                    assert state.height() >= state.heightForWidth(state.width()), (
+                        json.dumps(_control_size_diagnostics(state), indent=2)
+                    )
+                    assert state.font().pixelSize() == 18
+    finally:
+        QtWidgets.QApplication.setStyle(previous_style)
+
+
+@pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
+def test_full_sync_start_label_and_stop_button_fit_narrow_sidebar(window, style_name):
+    previous_style = QtWidgets.QApplication.style().objectName()
+    try:
+        QtWidgets.QApplication.setStyle(style_name)
+        window.channel_c_enabled.setChecked(True)
+        for check in window.sync_channel_checks.values():
+            check.setChecked(True)
+        window.resize(1180, 720)
+        window.show()
+        QtWidgets.QApplication.processEvents()
+        start, stop = window.start_both_button, window.stop_all_button
+        assert start.text() == "Synchronized start A+B+C"
+        for button in (start, stop):
+            assert button.width() >= button.sizeHint().width(), json.dumps(
+                _control_size_diagnostics(button), indent=2
+            )
+            assert button.parentWidget().rect().contains(button.geometry())
+        assert not start.geometry().intersects(stop.geometry())
     finally:
         QtWidgets.QApplication.setStyle(previous_style)
 

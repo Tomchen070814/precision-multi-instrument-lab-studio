@@ -220,6 +220,40 @@ def test_smoke_detects_dashboard_tab_overlap_in_shared_window_coordinates(
         )
 
 
+@pytest.mark.parametrize("overflow", [0, 56])
+def test_smoke_detects_dashboard_content_wider_than_viewport(
+    screenshot_widgets, tmp_path, overflow
+):
+    window, demo = screenshot_widgets
+    scroll = QtWidgets.QScrollArea(window)
+    scroll.setGeometry(0, 0, 350, 100)
+    content = QtWidgets.QWidget()
+    scroll.setWidget(content)
+    window.dashboard_scroll = scroll
+    window.tabs = QtWidgets.QTabWidget(window)
+    window.tabs.setGeometry(0, 110, 350, 100)
+    scroll.show()
+    window.tabs.show()
+    QtWidgets.QApplication.processEvents()
+    content.setFixedSize(scroll.viewport().width() + overflow, 50)
+    QtWidgets.QApplication.processEvents()
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(window, demo, tmp_path / "dashboard.json", report)
+    evidence = report["dashboard_layout"]
+    assert evidence["overlap_px"] == 0
+    assert (
+        evidence["content_rect"]["width"] - evidence["viewport_rect"]["width"]
+        == overflow
+    )
+    assert evidence["content_fits_width"] is (overflow == 0)
+    assert report["result"] == ("failed" if overflow else "passed")
+    if overflow:
+        assert any(
+            "Dashboard content is clipped horizontally" in reason
+            for reason in report["failure_reasons"]
+        )
+
+
 @pytest.mark.parametrize(
     "clipped", [None, "resource_combo", "resource_refresh", "connection_check"]
 )

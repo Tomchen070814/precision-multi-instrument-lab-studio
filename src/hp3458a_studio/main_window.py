@@ -503,7 +503,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_all_button = QtWidgets.QPushButton("停止全部")
         self.stop_all_button.setObjectName("danger")
         group_buttons.addWidget(self.start_both_button, 0, 0)
-        group_buttons.addWidget(self.stop_all_button, 0, 1)
+        group_buttons.addWidget(self.stop_all_button, 1, 0)
         layout.addLayout(group_buttons)
         self.sync_hint = QtWidgets.QLabel(
             "仅启动勾选的通道；两台或三台仪表会先分别连接和配置，"
@@ -532,6 +532,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         readout_row = QtWidgets.QHBoxLayout()
         readout_row.setSpacing(9)
+        self._readout_row_layout = readout_row
         for key in self.CHANNELS:
             readout_row.addWidget(self._build_channel_readout(key), 1)
         dashboard_layout.addLayout(readout_row)
@@ -606,7 +607,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(card)
         layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(2)
-        top = QtWidgets.QHBoxLayout()
+        top = QtWidgets.QGridLayout()
+        top.setSpacing(2)
         tag = PrecisionValueLabel(f"通道 {key}", maximum_font_px=12)
         tag.setObjectName(f"channelTag{key}")
         tag.setSizePolicy(
@@ -622,8 +624,15 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         state = QtWidgets.QLabel("待机")
         state.setObjectName("statusIdle")
-        top.addWidget(tag, 1)
-        top.addWidget(state)
+        state.setWordWrap(True)
+        state.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        top.addWidget(tag, 0, 0)
+        # A complete status gets its own row. Long native captions such as
+        # "Waiting for sync" must not widen all three cards or squeeze the tag.
+        top.addWidget(state, 1, 0)
         layout.addLayout(top)
         layout.addWidget(source)
 
@@ -1600,6 +1609,16 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar = getattr(self, "trend_toolbar_scroll", None)
         dashboard = getattr(self, "dashboard_scroll", None)
         if (
+            dashboard is not None
+            and watched is dashboard.viewport()
+            and event.type() == QtCore.QEvent.Type.Resize
+            and event.size().width() > 0
+        ):
+            # An appearing vertical scrollbar reduces the viewport before
+            # QScrollArea updates its resizable child's width. Constrain that
+            # width in the same resize delivery so no frame clips channel C.
+            dashboard.widget().setMaximumWidth(event.size().width())
+        if (
             layout_event
             and (
                 watched is getattr(self, "center_panel", None)
@@ -1623,6 +1642,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._shutdown_complete:
             return
         self._fit_trend_toolbar()
+        self._fit_readout_labels()
+        dashboard = self.dashboard_scroll.widget()
+        dashboard.layout().activate()
+        # Recompute the resizable content and scrollbar range after native
+        # captions change, before measuring the width-dependent height.
+        self.dashboard_scroll.setWidgetResizable(True)
         page_layout = self.trend_toolbar_scroll.parentWidget().layout()
         margins = page_layout.contentsMargins()
         chrome_height = (
@@ -1648,7 +1673,6 @@ class MainWindow(QtWidgets.QMainWindow):
             - self.tabs.minimumHeight()
             - self.center_panel.layout().spacing()
         )
-        dashboard = self.dashboard_scroll.widget()
         natural_height = dashboard.heightForWidth(
             self.dashboard_scroll.viewport().width()
         )
@@ -1663,15 +1687,28 @@ class MainWindow(QtWidgets.QMainWindow):
         center_layout.invalidate()
         center_layout.activate()
         dashboard.layout().activate()
+        self.dashboard_scroll.setWidgetResizable(True)
         page_layout.activate()
 
     def _fit_readout_labels(self) -> None:
         self._readout_fit_pending = False
         if self._shutdown_complete:
             return
+        row = self._readout_row_layout
+        margins = row.contentsMargins()
+        # Use the viewport's equal column allocation, rather than a card width
+        # that a long native label may already have expanded beyond it.
+        allocated_width = (
+            self.dashboard_scroll.viewport().width()
+            - margins.left()
+            - margins.right()
+            - row.spacing() * (len(self.CHANNELS) - 1)
+        ) // len(self.CHANNELS)
         for channel, readout in self.readouts.items():
             card = self.readout_cards[channel]
-            available_width = card.contentsRect().width() - 32
+            available_width = max(
+                1, min(card.contentsRect().width(), allocated_width) - 32
+            )
             interval, temperature = readout["interval"], readout["temperature"]
             details = self._readout_detail_layouts[channel]
             fits_together = (
@@ -1682,7 +1719,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if details.getItemPosition(details.indexOf(temperature))[:2] != target:
                 details.removeWidget(temperature)
                 details.addWidget(temperature, *target)
-            for key in ("source", "mode", "time", "extremes"):
+            for key in ("state", "source", "mode", "time", "extremes"):
                 label = readout[key]
                 signature = (label.width(), label.text(), label.font().key())
                 if (
