@@ -199,6 +199,10 @@ def test_device_tabs_select_individual_data_statistics_and_units(window):
         panel.function_combo.setCurrentIndex(
             panel.function_combo.findData(function.value)
         )
+        session = window.channels[channel].session
+        session.instrument_model = model.display_name
+        session.resource = panel.resource_name
+        session.measurement_function = function.command
         for index in range(8):
             window.channels[channel].session.append(
                 Measurement(index * 0.1, value + index * value * 1e-6, unit)
@@ -338,8 +342,9 @@ def test_inspector_scrolls_without_compressing_parameter_cards(window, size, lan
 
 @pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
 @pytest.mark.parametrize("font_px", [18, 24])
+@pytest.mark.parametrize("font_family", ["Arial", "Courier New"])
 def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
-    app, window, style_name, font_px
+    app, window, style_name, font_px, font_family
 ):
     previous_style = app.style().objectName()
     app.setStyle(QtWidgets.QStyleFactory.create(style_name))
@@ -347,7 +352,9 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
         window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
         scroll = window.inspector_scroll
         scroll.setMaximumWidth(260)
-        scroll.widget().setStyleSheet(f"* {{ font-size: {font_px}px; }}")
+        scroll.widget().setStyleSheet(
+            f"* {{ font-size: {font_px}px; font-family: '{font_family}'; }}"
+        )
         window.identity_model.setText("Keysight Technologies 34470A")
         window.identity_resource.setText("TCPIP0::192.168.100.123::inst0::INSTR")
         window.autosave_path_label.setText(
@@ -360,7 +367,14 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
 
         assert scroll.width() == 260
         assert scroll.viewport().width() == 252
-        assert scroll.widget().width() <= scroll.viewport().width()
+        assert scroll.widget().width() <= scroll.viewport().width(), {
+            type(child).__name__ + ": " + getattr(child, "text", lambda: "")(): (
+                child.width(),
+                child.minimumSizeHint().width(),
+            )
+            for child in scroll.widget().findChildren(QtWidgets.QWidget)
+            if child.minimumSizeHint().width() > scroll.viewport().width() - 28
+        }
         assert scroll.horizontalScrollBar().maximum() == 0
         assert scroll.verticalScrollBar().maximum() > 0
         for field in (
@@ -503,6 +517,37 @@ def test_readout_interval_and_trend_toolbar_remain_readable(window, size, langua
         assert toolbar.viewport().rect().contains(bounds)
         assert control.width() >= control.sizeHint().width()
         assert control.height() >= control.sizeHint().height()
+
+
+@pytest.mark.parametrize("font_family", ["Arial", "Courier New"])
+@pytest.mark.parametrize("size", [(1180, 720), (1600, 1000)])
+def test_long_precision_readouts_and_units_stay_inside_cards(window, size, font_family):
+    value_text = "0.010000021768"
+    for channel, unit in zip(window.CHANNELS, ("mA", "Ω", "nF"), strict=True):
+        window.readout_cards[channel].setStyleSheet(
+            f"* {{ font-family: '{font_family}'; }}"
+        )
+        readout = window.readouts[channel]
+        readout["value"].setStyleSheet("font-size: 32px;")
+        readout["value"].setText(value_text)
+        readout["unit"].setText(unit)
+    window.resize(*size)
+    window.show()
+    QtTest.QTest.qWait(100)
+    assert window.size() == QtCore.QSize(*size)
+    assert window.trend_plot.viewport().height() >= 120
+    for channel in window.CHANNELS:
+        card = window.readout_cards[channel]
+        value, unit = (
+            window.readouts[channel]["value"],
+            window.readouts[channel]["unit"],
+        )
+        assert value.text() == value_text
+        assert value.fontMetrics().horizontalAdvance(value.text()) <= value.width()
+        assert unit.width() >= unit.sizeHint().width()
+        assert card.rect().contains(value.geometry())
+        assert card.rect().contains(unit.geometry())
+        assert not value.geometry().intersects(unit.geometry())
 
 
 @pytest.mark.parametrize(

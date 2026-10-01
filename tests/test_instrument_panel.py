@@ -16,6 +16,16 @@ def app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+@pytest.fixture
+def panel_style(app, request):
+    previous_style = app.style().objectName()
+    app.setStyle(QtWidgets.QStyleFactory.create(request.param))
+    try:
+        yield
+    finally:
+        app.setStyle(QtWidgets.QStyleFactory.create(previous_style))
+
+
 @pytest.mark.parametrize("model", list(InstrumentModel))
 def test_model_and_functions_roundtrip_through_qt_item_data(app, model):
     panel = InstrumentControlPanel("A", "GPIB0::21::INSTR")
@@ -131,14 +141,19 @@ def test_wheel_over_setting_scrolls_panel_without_editing_it(app):
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("panel_style", ["Windows", "Fusion"], indirect=True)
 @pytest.mark.parametrize(
     "model", [InstrumentModel.KEYSIGHT_3458A, InstrumentModel.FLUKE_8508A]
 )
 def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
-    app, language, model
+    app, language, model, panel_style
 ):
     window = QtWidgets.QWidget()
-    window.setStyleSheet(APP_STYLE)
+    # Reserve a real vertical scrollbar width even on macOS, where overlay
+    # scrollbars otherwise hide the narrow Windows/Linux viewport regression.
+    window.setStyleSheet(
+        APP_STYLE + "\nQScrollBar:vertical { width: 24px; min-width: 24px; }"
+    )
     window.resize(1180, 800)
     layout = QtWidgets.QHBoxLayout(window)
     scroll = QtWidgets.QScrollArea()
@@ -146,6 +161,7 @@ def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
     scroll.setFixedWidth(271)
     scroll.setWidgetResizable(True)
     scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     panel = InstrumentControlPanel("A", "GPIB0::21::INSTR", language=language)
     panel.model_combo.setCurrentIndex(panel.model_combo.findData(model.value))
     panel.interval_spin.setValue(21.1)
@@ -154,6 +170,7 @@ def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
     layout.addWidget(QtWidgets.QWidget(), 1)
     window.show()
     app.processEvents()
+    assert scroll.viewport().width() < scroll.width()
     for control in (
         panel.model_combo,
         panel.function_combo,

@@ -236,6 +236,7 @@ class SessionData:
     channel: str = ""
     instrument_model: str = ""
     resource: str = ""
+    measurement_function: str = ""
 
     def append(self, measurement: Measurement) -> None:
         self.elapsed_s.append(float(measurement.elapsed_s))
@@ -253,6 +254,9 @@ class SessionData:
         self.values.clear()
         del self.timestamps[:]
         self.temperatures_c.clear()
+        self.instrument_model = ""
+        self.resource = ""
+        self.measurement_function = ""
 
     def replace(
         self,
@@ -263,6 +267,9 @@ class SessionData:
         *,
         timestamps: np.ndarray | None = None,
         temperatures_c: np.ndarray | None = None,
+        instrument_model: str = "",
+        resource: str = "",
+        measurement_function: str = "",
     ) -> None:
         original_times = np.asarray(elapsed_s, dtype=float)
         readings = np.asarray(values, dtype=float)
@@ -303,6 +310,9 @@ class SessionData:
         self.unit = unit
         self.source = source
         self.temperatures_c = temperature_values.tolist()
+        self.instrument_model = instrument_model
+        self.resource = resource
+        self.measurement_function = measurement_function
 
     @property
     def x(self) -> np.ndarray:

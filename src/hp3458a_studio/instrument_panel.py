@@ -146,7 +146,9 @@ class InstrumentControlPanel(QtWidgets.QWidget):
                 QtWidgets.QSizePolicy.Policy.Expanding,
                 QtWidgets.QSizePolicy.Policy.Fixed,
             )
-        self.resource_combo.setMinimumContentsLength(4)
+        # This field shares a row with two fixed buttons. Leave room for
+        # platforms whose vertical scrollbar occupies part of the sidebar.
+        self.resource_combo.setMinimumContentsLength(2)
         for combo in (
             self.model_combo,
             self.function_combo,

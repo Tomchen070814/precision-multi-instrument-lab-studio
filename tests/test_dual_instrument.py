@@ -178,6 +178,12 @@ def test_every_analysis_page_identifies_selected_instrument_and_resource(app):
     window.panels["B"].driver_combo.setCurrentIndex(1)
     window.panels["A"].resource_combo.setCurrentText("GPIB0::21::INSTR")
     window.panels["B"].resource_combo.setCurrentText("GPIB1::22::INSTR")
+    for channel in ("A", "B"):
+        panel = window.panels[channel]
+        session = window.channels[channel].session
+        session.instrument_model = panel.instrument_model.display_name
+        session.resource = panel.resource_name
+        session.measurement_function = panel.current_function().command
     for index in range(8):
         window.channels["A"].session.append(
             Measurement(index * 0.1, 1.0 + index * 1e-6, "V")
@@ -225,6 +231,12 @@ def test_dual_analysis_displays_a_and_b_on_every_analysis_page(app):
     window.panels["B"].driver_combo.setCurrentIndex(1)
     window.panels["A"].resource_combo.setCurrentText("GPIB0::21::INSTR")
     window.panels["B"].resource_combo.setCurrentText("GPIB1::22::INSTR")
+    for channel in ("A", "B"):
+        panel = window.panels[channel]
+        session = window.channels[channel].session
+        session.instrument_model = panel.instrument_model.display_name
+        session.resource = panel.resource_name
+        session.measurement_function = panel.current_function().command
     for index in range(32):
         temperature = 25.0 + index * 0.01
         window.channels["A"].session.append(
@@ -463,11 +475,13 @@ def test_language_switch_updates_main_and_instrument_controls(app):
     window.language_combo.setCurrentIndex(english_index)
 
     assert window.stop_all_button.text() == "Stop all"
-    assert window.import_button.text() == "Import to selected"
+    assert " ".join(window.import_button.text().split()) == "Import to selected"
     assert window.panels["A"].resource_refresh.text() == "Scan"
     assert window.panels["A"].start_button.text() == "Start 3458A A"
     assert window.start_both_button.text() == "Synchronized start A+B"
-    assert window.export_diagnostic_button.text() == "Export diagnostics"
+    assert (
+        " ".join(window.export_diagnostic_button.text().split()) == "Export diagnostics"
+    )
     assert "Multi-channel trend" in window.tabs.tabText(window.trend_tab_index)
 
     chinese_index = window.language_combo.findData("zh")

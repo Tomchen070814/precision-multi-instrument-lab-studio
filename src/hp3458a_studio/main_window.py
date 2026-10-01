@@ -104,6 +104,9 @@ class ChannelRuntime:
     minimum: float = np.inf
     maximum: float = -np.inf
     last_connection_diagnostic: ConnectionDiagnostic | None = None
+    capture_config: AcquisitionConfig | None = None
+    capture_source_kind: str = ""
+    capture_mode: str = ""
 
     @property
     def running(self) -> bool:
@@ -145,6 +148,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._static_text_widgets: list[tuple[QtWidgets.QWidget, str]] = []
         self._inspector_control_texts: dict[QtWidgets.QWidget, str] = {}
         self._inspector_fit_pending = False
+        self._inspector_layout_signature: tuple | None = None
+        self._readout_fit_pending = False
+        self._readout_layout_keys: dict[QtWidgets.QLabel, tuple] = {}
+        self._readout_detail_layouts: dict[str, QtWidgets.QGridLayout] = {}
+        self._readout_value_font_px: dict[str, int] = {}
         self.setWindowTitle("Precision Multi-Instrument Lab Studio")
         self.resize(1600, 960)
         self.setMinimumSize(1180, 720)
@@ -383,7 +391,7 @@ class MainWindow(QtWidgets.QMainWindow):
         center = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(center)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(9)
+        layout.setSpacing(6)
 
         readout_row = QtWidgets.QHBoxLayout()
         readout_row.setSpacing(9)
@@ -434,8 +442,8 @@ class MainWindow(QtWidgets.QMainWindow):
         card = Card(object_name="channelReadout")
         self.readout_cards[key] = card
         layout = QtWidgets.QVBoxLayout(card)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(3)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(2)
         top = QtWidgets.QHBoxLayout()
         tag = QtWidgets.QLabel(f"通道 {key}")
         tag.setObjectName(f"channelTag{key}")
@@ -452,8 +460,16 @@ class MainWindow(QtWidgets.QMainWindow):
         value_row = QtWidgets.QHBoxLayout()
         value = QtWidgets.QLabel("—")
         value.setObjectName("channelReadoutValue")
+        value.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         unit = QtWidgets.QLabel("V")
         unit.setObjectName("readoutUnit")
+        unit.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         value_row.addWidget(value, 1)
         value_row.addWidget(unit, alignment=QtCore.Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(value_row)
@@ -466,7 +482,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
         layout.addWidget(mode)
-        details = QtWidgets.QHBoxLayout()
         interval = QtWidgets.QLabel("Δt —")
         interval.setObjectName("hint")
         time_label = QtWidgets.QLabel("等待数据")
@@ -478,9 +493,12 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         temperature = QtWidgets.QLabel("TEMP —")
         temperature.setObjectName("hint")
-        details.addWidget(interval)
-        details.addStretch()
-        details.addWidget(temperature)
+        details = QtWidgets.QGridLayout()
+        details.setContentsMargins(0, 0, 0, 0)
+        details.setSpacing(2)
+        details.addWidget(interval, 0, 0)
+        details.addWidget(temperature, 1, 0)
+        self._readout_detail_layouts[key] = details
         layout.addLayout(details)
         layout.addWidget(time_label)
         extremes = QtWidgets.QLabel("MIN —  ·  MAX —")
@@ -503,6 +521,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "temperature": temperature,
             "extremes": extremes,
         }
+        card.installEventFilter(self)
         return card
 
     def _build_trend_tab(self) -> QtWidgets.QWidget:
@@ -812,6 +831,10 @@ class MainWindow(QtWidgets.QMainWindow):
         session_card = Card()
         form = QtWidgets.QFormLayout(session_card)
         form.setContentsMargins(12, 11, 12, 11)
+        form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
         self.session_count = QtWidgets.QLabel("0")
         self.session_duration = QtWidgets.QLabel("0 s")
         self.session_rate = QtWidgets.QLabel("—")
@@ -834,6 +857,10 @@ class MainWindow(QtWidgets.QMainWindow):
         identity_card = Card()
         identity_form = QtWidgets.QFormLayout(identity_card)
         identity_form.setContentsMargins(12, 11, 12, 11)
+        identity_form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapAllRows)
+        identity_form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
         self.identity_model = QtWidgets.QLabel("—")
         self.identity_resource = QtWidgets.QLabel("—")
         self.identity_fw = QtWidgets.QLabel("—")
@@ -1130,8 +1157,12 @@ class MainWindow(QtWidgets.QMainWindow):
         panel = self.panels[channel]
         readout = self.readouts[channel]
         count = len(runtime.session)
-        command = panel.current_function().command
-        range_text = panel.range_combo.currentText().upper()
+        command = self._analysis_function_text(channel)
+        range_text = (
+            runtime.capture_config.measurement_range
+            if runtime.capture_config is not None
+            else ("—" if count else panel.range_combo.currentText().upper())
+        )
         if runtime.target_samples is None:
             length_text = "CONTINUOUS" if self.language == "en" else "持续"
         else:
@@ -1186,7 +1217,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_channel_model_ui(self, channel: str) -> None:
         panel = self.panels[channel]
         model = panel.instrument_model
-        self.readouts[channel]["tag"].setText(f"{model.short_name} {channel}")
+        self.readouts[channel]["tag"].setText(
+            f"{self._analysis_model_text(channel)} {channel}"
+        )
         index = self.CHANNELS.index(channel)
         self.device_tabs.setTabText(
             index,
@@ -1344,22 +1377,80 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_views()
 
     def eventFilter(self, watched, event) -> bool:
+        layout_event = event.type() in (
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.LayoutRequest,
+            QtCore.QEvent.Type.StyleChange,
+            QtCore.QEvent.Type.FontChange,
+        )
         scroll = getattr(self, "inspector_scroll", None)
         if (
             scroll is not None
             and watched in (scroll.widget(), scroll.viewport())
-            and event.type()
-            in (
-                QtCore.QEvent.Type.Resize,
-                QtCore.QEvent.Type.LayoutRequest,
-                QtCore.QEvent.Type.StyleChange,
-                QtCore.QEvent.Type.FontChange,
-            )
+            and layout_event
             and not self._inspector_fit_pending
         ):
             self._inspector_fit_pending = True
             QtCore.QTimer.singleShot(0, self._fit_inspector_controls)
+        if (
+            watched in self.readout_cards.values()
+            and layout_event
+            and not self._readout_fit_pending
+        ):
+            self._readout_fit_pending = True
+            QtCore.QTimer.singleShot(0, self._fit_readout_labels)
         return super().eventFilter(watched, event)
+
+    def _fit_readout_labels(self) -> None:
+        self._readout_fit_pending = False
+        if self._shutdown_complete:
+            return
+        for channel, readout in self.readouts.items():
+            card = self.readout_cards[channel]
+            available_width = card.contentsRect().width() - 32
+            interval, temperature = readout["interval"], readout["temperature"]
+            details = self._readout_detail_layouts[channel]
+            fits_together = (
+                interval.sizeHint().width() + temperature.sizeHint().width() + 2
+                <= available_width
+            )
+            target = (0, 1) if fits_together else (1, 0)
+            if details.getItemPosition(details.indexOf(temperature))[:2] != target:
+                details.removeWidget(temperature)
+                details.addWidget(temperature, *target)
+            value = readout["value"]
+            value.ensurePolished()
+            maximum_px = self._readout_value_font_px.setdefault(
+                channel, QtGui.QFontInfo(value.font()).pixelSize()
+            )
+            font = QtGui.QFont(value.font())
+            font_px = maximum_px
+            value_width = max(
+                1, available_width - readout["unit"].sizeHint().width() - 8
+            )
+            while font_px > 1:
+                font.setPixelSize(font_px)
+                if (
+                    QtGui.QFontMetrics(font).horizontalAdvance(value.text())
+                    <= value_width
+                ):
+                    break
+                font_px -= 1
+            if value.font().pixelSize() != font_px:
+                value.setStyleSheet(f"font-size: {font_px}px;")
+            for key in ("mode", "time", "extremes"):
+                label = readout[key]
+                signature = (label.width(), label.text(), label.font().key())
+                if (
+                    signature == self._readout_layout_keys.get(label)
+                    or label.width() <= 0
+                ):
+                    continue
+                self._readout_layout_keys[label] = signature
+                # Qt styles round height-for-width differently. Reserve the
+                # complete wrapped text height before distributing card rows.
+                label.setMinimumHeight(0)
+                label.setMinimumHeight(label.heightForWidth(label.width()))
 
     @staticmethod
     def _wrap_control_text(text: str, metrics: QtGui.QFontMetrics, width: int) -> str:
@@ -1391,14 +1482,62 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         content_width = max(80, scroll.viewport().width() - 28)
         for control, text in self._inspector_control_texts.items():
-            inset = 26
+            control.ensurePolished()
+            available_width = content_width
             if control is self.open_autosave_button:
-                inset += 24
-            wrapped = self._wrap_control_text(
-                text, control.fontMetrics(), max(40, content_width - inset)
+                available_width -= 26
+            metrics = control.fontMetrics()
+            line_width = max(
+                (
+                    metrics.horizontalAdvance(line)
+                    for line in control.text().splitlines()
+                ),
+                default=0,
             )
-            if control.text() != wrapped:
-                control.setText(wrapped)
+            inset = max(26, control.sizeHint().width() - line_width)
+            wrap_width = max(40, available_width - inset)
+            # Native styles add different text/indicator margins. Verify the
+            # resulting native minimum instead of assuming one platform's gap.
+            for _attempt in range(5):
+                wrapped = self._wrap_control_text(text, metrics, wrap_width)
+                if control.text() != wrapped:
+                    control.setText(wrapped)
+                overflow = control.minimumSizeHint().width() - available_width
+                if overflow <= 0:
+                    break
+                wrap_width = max(1, wrap_width - overflow - 2)
+        inspector = scroll.widget()
+        signature = (
+            scroll.viewport().width(),
+            QtWidgets.QApplication.style().objectName(),
+            tuple(
+                (
+                    control.text(),
+                    control.font().key(),
+                    control.minimumSizeHint().width(),
+                )
+                for control in self._inspector_control_texts
+            ),
+            tuple(
+                (label.text(), label.font().key())
+                for label in inspector.findChildren(QtWidgets.QLabel)
+            ),
+        )
+        if signature == self._inspector_layout_signature:
+            return
+        self._inspector_layout_signature = signature
+        # Invalidate each card first: QWidgetItem can retain a larger cached
+        # minimum after a style/font change until its parent's layout request.
+        # Recompute it here so the hidden horizontal scrollbar cannot leave
+        # the inspector wider than its viewport for an additional event cycle.
+        for child in inspector.findChildren(QtWidgets.QWidget):
+            child_layout = child.layout()
+            if child_layout is not None:
+                child_layout.invalidate()
+                child_layout.activate()
+                child.updateGeometry()
+        inspector.layout().invalidate()
+        inspector.layout().activate()
 
     def _fit_trend_toolbar(self) -> None:
         scroll = self.trend_toolbar_scroll
@@ -1934,6 +2073,10 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime.session.channel = channel
         runtime.session.instrument_model = panel.instrument_model.display_name
         runtime.session.resource = source
+        runtime.session.measurement_function = config.function.command
+        runtime.capture_config = config
+        runtime.capture_source_kind = panel.source_kind
+        runtime.capture_mode = panel.acquisition_mode
         runtime.last_temperature = np.nan
         runtime.minimum = np.inf
         runtime.maximum = -np.inf
@@ -2251,6 +2394,9 @@ class MainWindow(QtWidgets.QMainWindow):
             y_array,
             unit=runtime.session.unit,
             source=runtime.session.source,
+            instrument_model=runtime.session.instrument_model,
+            resource=runtime.session.resource,
+            measurement_function=runtime.session.measurement_function,
         )
         if y_array.size:
             runtime.minimum = float(np.min(y_array))
@@ -2493,13 +2639,41 @@ class MainWindow(QtWidgets.QMainWindow):
             return x[mask], y[mask], temperature[mask]
         return x, y, temperature
 
+    def _has_session_identity(self, channel: str) -> bool:
+        session = self.channels[channel].session
+        return bool(len(session) or session.measurement_function)
+
+    def _analysis_model_text(self, channel: str) -> str:
+        if not self._has_session_identity(channel):
+            return self.panels[channel].instrument_model.short_name
+        name = self.channels[channel].session.instrument_model
+        return next(
+            (
+                model.short_name
+                for model in InstrumentModel
+                if model.display_name == name
+            ),
+            name or "—",
+        )
+
+    def _analysis_function_text(self, channel: str) -> str:
+        if not self._has_session_identity(channel):
+            return self.panels[channel].current_function().command
+        return self.channels[channel].session.measurement_function or "—"
+
     def _analysis_resource_text(self, channel: str) -> str:
         runtime = self.channels[channel]
-        if runtime.identity is not None:
-            return runtime.identity.resource
-        session_source = runtime.session.source.strip()
-        if session_source and session_source not in {"演示模式", "CSV"}:
-            return session_source
+        if self._has_session_identity(channel):
+            if runtime.identity is not None:
+                return runtime.identity.resource
+            if runtime.session.resource:
+                return runtime.session.resource
+            session_source = runtime.session.source.strip()
+            return (
+                session_source
+                if session_source and session_source not in {"演示模式", "CSV"}
+                else "—"
+            )
         panel = self.panels[channel]
         if panel.source_kind == "visa":
             return panel.resource_name
@@ -2536,13 +2710,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_analysis_identity(self) -> None:
         """Keep every analysis surface visibly tied to its physical instruments."""
         metric_channel = self.selected_channel
-        metric_panel = self.panels[metric_channel]
         metric_resource = self._analysis_resource_text(metric_channel)
+        metric_unit = (
+            self.channels[metric_channel].session.unit
+            if self._has_session_identity(metric_channel)
+            else self.panels[metric_channel].current_function().unit
+        )
         metric_identity = (
-            f"{metric_channel} · {metric_panel.instrument_model.short_name} · "
-            f"{metric_panel.current_function().command} · "
+            f"{metric_channel} · {self._analysis_model_text(metric_channel)} · "
+            f"{self._analysis_function_text(metric_channel)} · "
             f"{metric_resource} · "
-            f"{self.channels[metric_channel].session.unit}"
+            f"{metric_unit}"
         )
         self.metric_basis_label.setText(
             f"METRIC SOURCE  {metric_identity}"
@@ -2571,8 +2749,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.metric_cards[key].setToolTip(metric_identity)
 
         for index, key in enumerate(self.CHANNELS):
+            self.readouts[key]["tag"].setText(f"{self._analysis_model_text(key)} {key}")
             item_resource = self._analysis_resource_text(key)
-            model_name = self.panels[key].instrument_model.short_name
+            model_name = self._analysis_model_text(key)
             self.analysis_channel_combo.setItemText(
                 index, f"{model_name} {key} · {item_resource}"
             )
@@ -2585,8 +2764,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if multi:
             suffix = "+".join(analysis_channels)
             channel_text = " + ".join(
-                f"{self.panels[key].instrument_model.short_name} {key}"
-                for key in analysis_channels
+                f"{self._analysis_model_text(key)} {key}" for key in analysis_channels
             )
             resource = "  ·  ".join(
                 f"{key} {self._analysis_resource_text(key)}"
@@ -2633,9 +2811,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     else tr(self.language, "会话数据")
                 )
             )
-            channel_text = (
-                f"{self.panels[channel].instrument_model.short_name} {channel}"
-            )
+            channel_text = f"{self._analysis_model_text(channel)} {channel}"
             meta_text = (
                 f"{tr(self.language, '单通道分析')} · {source_kind} · "
                 f"{self._sample_text(channel)} · {session.unit}"
@@ -2655,9 +2831,8 @@ class MainWindow(QtWidgets.QMainWindow):
             banner["meta"].setText(meta_text)
             banner["meta"].setToolTip("")
         for key in self.CHANNELS:
-            panel = self.panels[key]
             legend_identity = (
-                f"{key} · {panel.instrument_model.short_name} · "
+                f"{key} · {self._analysis_model_text(key)} · "
                 f"{self._analysis_resource_text(key)}"
             )
             for plot, item in (
@@ -2678,7 +2853,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"{legend_identity} · FIT",
             )
             self.statistics_summary_titles[key].setText(
-                f"{self.panels[key].instrument_model.short_name} {key} · "
+                f"{self._analysis_model_text(key)} {key} · "
                 f"{tr(self.language, '统计摘要')}"
             )
 
@@ -2853,15 +3028,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         for trend_channel in self.CHANNELS:
             trend_session = self.channels[trend_channel].session
-            panel = self.panels[trend_channel]
             x_display, y_display = self._session_display_arrays(
                 trend_session,
                 x_window=self._trend_x_window,
             )
             label = (
-                f"{trend_channel} · {panel.instrument_model.short_name}"
-                f" · {panel.current_function().command}"
-                f" · {panel.resource_name} ({trend_session.unit})"
+                f"{trend_channel} · {self._analysis_model_text(trend_channel)}"
+                f" · {self._analysis_function_text(trend_channel)}"
+                f" · {self._analysis_resource_text(trend_channel)} ({trend_session.unit})"
             )
             self.trend_plot.set_channel_data(
                 trend_channel,
@@ -2889,14 +3063,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 if len(self.channels[key].session)
             }
         )
-        panel = self.panels[channel]
+        model_name = self._analysis_model_text(channel)
+        function = self._analysis_function_text(channel)
+        resource = self._analysis_resource_text(channel)
         self.comparison_note.setText(
-            f"Metric source {channel} · {panel.instrument_model.short_name} · "
-            f"{panel.current_function().command} · {panel.resource_name} · "
+            f"Metric source {channel} · {model_name} · "
+            f"{function} · {resource} · "
             f"{axis_count} physical-unit axis/axes"
             if self.language == "en"
-            else f"当前指标 {channel} · {panel.instrument_model.short_name} · "
-            f"{panel.current_function().command} · {panel.resource_name}；"
+            else f"当前指标 {channel} · {model_name} · "
+            f"{function} · {resource}；"
             f"{axis_count} 个物理量 Y 轴"
         )
 
@@ -2986,7 +3162,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 if len(self.analysis_channels) > 1
                 else (
-                    f"{self.panels[self.selected_channel].instrument_model.short_name} "
+                    f"{self._analysis_model_text(self.selected_channel)} "
                     f"{self.selected_channel} · "
                     f"{tr(self.language, '需要至少 4 个有效样本')}"
                 )
@@ -3160,7 +3336,7 @@ class MainWindow(QtWidgets.QMainWindow):
             unit = channel_unit
             if y.size < 4:
                 note_parts.append(
-                    f"{self.panels[channel].instrument_model.short_name} "
+                    f"{self._analysis_model_text(channel)} "
                     f"{channel} · "
                     f"{tr(self.language, '需要至少 4 个有效样本')}"
                 )
@@ -3194,7 +3370,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     else f"温度系数 {coefficient_ppm:.5g} ppm/°C"
                 )
             note_parts.append(
-                f"{self.panels[channel].instrument_model.short_name} "
+                f"{self._analysis_model_text(channel)} "
                 f"{channel} · "
                 f"{'linear drift' if self.language == 'en' else '线性漂移'} "
                 f"{format_number(drift_per_hour, channel_unit + '/h', 6)}"
@@ -3259,10 +3435,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 temperatures_c=imported.temperatures_c,
             )
             runtime.session.channel = channel
-            runtime.session.instrument_model = self.panels[
-                channel
-            ].instrument_model.display_name
             runtime.session.resource = f"CSV::{Path(path).name}"
+            runtime.identity = None
+            runtime.capture_config = None
+            runtime.capture_source_kind = ""
+            runtime.capture_mode = ""
+            runtime.last_temperature = (
+                float(runtime.session.temperatures_c[-1])
+                if runtime.session.temperatures_c
+                else np.nan
+            )
             runtime.minimum = float(np.min(imported.values))
             runtime.maximum = float(np.max(imported.values))
             runtime.target_samples = None
@@ -3270,6 +3452,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_sampling_hint(channel)
             readout = self.readouts[channel]
             readout["source"].setText(Path(path).name)
+            readout["mode"].setText("— · — · CSV")
+            readout["temperature"].setText(
+                f"TEMP {runtime.last_temperature:.3f}°C"
+                if np.isfinite(runtime.last_temperature)
+                else "TEMP —"
+            )
             readout["value"].setText(f"{imported.values[-1]:.11g}")
             readout["unit"].setText(imported.unit)
             readout["extremes"].setText(
@@ -3432,14 +3620,9 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime = self.channels[channel]
         panel = self.panels[channel]
         identity = runtime.identity
-        elapsed = (
-            float(runtime.session.elapsed_s[-1]) if runtime.session.elapsed_s else 0.0
-        )
-        return {
-            "enabled": channel in self.enabled_channels,
-            "selected_for_group_start": channel in self.sync_channels,
-            "state": runtime.state,
-            "running": runtime.worker is not None,
+        has_session = self._has_session_identity(channel)
+        capture_config = runtime.capture_config
+        configured_settings = {
             "source_type": panel.source_kind,
             "instrument_model": panel.instrument_model.display_name,
             "resource": panel.resource_name,
@@ -3451,6 +3634,35 @@ class MainWindow(QtWidgets.QMainWindow):
             "digits": panel.digits_combo.currentData(),
             "autozero": panel.autozero_combo.currentText(),
             "sample_interval_s": panel.interval_spin.value(),
+        }
+        session_settings = (
+            {
+                "source_type": runtime.capture_source_kind
+                or ("csv" if runtime.session.resource.startswith("CSV::") else "—"),
+                "instrument_model": runtime.session.instrument_model or "—",
+                "resource": self._analysis_resource_text(channel),
+                "acquisition_mode": runtime.capture_mode or "—",
+                "measurement_function": self._analysis_function_text(channel),
+                "measurement_unit": runtime.session.unit,
+                "range": (capture_config.measurement_range if capture_config else None),
+                "nplc": f"{capture_config.nplc:g}" if capture_config else None,
+                "digits": capture_config.digits if capture_config else None,
+                "autozero": capture_config.autozero if capture_config else None,
+                "sample_interval_s": runtime.sample_interval_s,
+            }
+            if has_session
+            else configured_settings
+        )
+        elapsed = (
+            float(runtime.session.elapsed_s[-1]) if runtime.session.elapsed_s else 0.0
+        )
+        return {
+            "enabled": channel in self.enabled_channels,
+            "selected_for_group_start": channel in self.sync_channels,
+            "state": runtime.state,
+            "running": runtime.worker is not None,
+            **session_settings,
+            "configured_settings": configured_settings,
             "target_samples": runtime.target_samples,
             "samples_acquired": len(runtime.session),
             "elapsed_s": elapsed,
@@ -3567,6 +3779,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         runtime.session.clear()
         runtime.identity = None
+        runtime.capture_config = None
+        runtime.capture_source_kind = ""
+        runtime.capture_mode = ""
         runtime.last_temperature = np.nan
         runtime.target_samples = None
         runtime.sample_interval_s = None
