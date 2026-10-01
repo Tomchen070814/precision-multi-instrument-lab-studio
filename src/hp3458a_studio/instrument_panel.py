@@ -55,15 +55,15 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         )
         self.resource_combo.addItem(self.default_resource)
         outer.addWidget(self.resource_combo)
-        resource_row = QtWidgets.QHBoxLayout()
-        # Give addresses their full row and let native button text determine
-        # its minimum width, including Windows fonts and translated labels.
-        resource_row.setSpacing(4)
+        resource_actions = QtWidgets.QVBoxLayout()
+        # Each action keeps a full row: their combined English native minimum
+        # can exceed the narrow sidebar even when either label fits by itself.
+        resource_actions.setSpacing(4)
         self.resource_refresh = QtWidgets.QPushButton()
         self.connection_check = QtWidgets.QPushButton()
-        resource_row.addWidget(self.resource_refresh, 1)
-        resource_row.addWidget(self.connection_check, 1)
-        outer.addLayout(resource_row)
+        resource_actions.addWidget(self.resource_refresh)
+        resource_actions.addWidget(self.connection_check)
+        outer.addLayout(resource_actions)
 
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem("", "precision")
