@@ -78,10 +78,12 @@ def app():
 
 
 @pytest.fixture
-def window(app, tmp_path, monkeypatch):
+def window(app, tmp_path, monkeypatch, request):
     settings = QtCore.QSettings(
         str(tmp_path / "settings.ini"), QtCore.QSettings.Format.IniFormat
     )
+    if getattr(request, "param", None) is not None:
+        settings.setValue("language", request.param)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(MainWindow, "_create_settings", staticmethod(lambda: settings))
     monkeypatch.setattr(
@@ -96,6 +98,80 @@ def window(app, tmp_path, monkeypatch):
     assert _wait_until(lambda: result._shutdown_complete)
     result.deleteLater()
     QtWidgets.QApplication.processEvents()
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [(None, "en"), ("unsupported-language", "en"), ("zh", "zh"), ("en", "en")],
+    indirect=["window"],
+)
+def test_startup_defaults_to_english_and_preserves_saved_language(window, expected):
+    assert window.language == expected
+    assert window.language_combo.currentData() == expected
+    assert all(panel.language == expected for panel in window.panels.values())
+    assert window.windowTitle() == (
+        "Precision Multi-Instrument Lab Studio"
+        if expected == "en"
+        else "精密多仪器测量平台"
+    )
+
+
+def test_default_english_can_switch_to_and_remember_chinese(window):
+    assert window.language == "en"
+    window.language_combo.setCurrentIndex(window.language_combo.findData("zh"))
+    assert window.language == "zh"
+    assert window.settings.value("language") == "zh"
+    assert all(panel.language == "zh" for panel in window.panels.values())
+    assert window.panels["A"].start_button.text() == "启动 3458A A"
+    window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+    assert window.settings.value("language") == "en"
+    assert window.panels["A"].start_button.text() == "Start 3458A A"
+
+
+def test_standalone_instrument_panel_defaults_to_english(app):
+    panel = main_window_module.InstrumentControlPanel("A", "GPIB0::21::INSTR")
+    try:
+        assert panel.language == "en"
+        assert panel.start_button.text() == "Start 3458A A"
+        panel.set_language("zh")
+        assert panel.start_button.text() == "启动 3458A A"
+    finally:
+        panel.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("has_data", [False, True])
+def test_charts_have_no_legend_overlay_and_preserve_channel_controls(window, has_data):
+    if has_data:
+        window.channel_c_enabled.setChecked(True)
+        for channel, runtime in window.channels.items():
+            runtime.session.replace(
+                np.arange(16, dtype=float),
+                np.linspace(1, 2, 16) + ord(channel),
+                "V",
+                "simulation",
+            )
+        window._refresh_views()
+    for language in ("en", "zh"):
+        window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+        for plot in (
+            window.trend_plot,
+            window.fft_plot,
+            window.asd_plot,
+            window.hist_plot,
+            window.allan_plot,
+            window.drift_plot,
+        ):
+            legend = plot.getPlotItem().legend
+            assert legend is None or not legend.isVisible()
+        assert set(window.readouts) == {"A", "B", "C"}
+        assert set(window.panels) == {"A", "B", "C"}
+        assert window.device_tabs.count() == 3
+        for channel in window.CHANNELS:
+            assert window.analysis_channel_combo.findData(channel) >= 0
+            if has_data:
+                _x, y = window.trend_plot._curves[channel].getData()
+                assert y is not None and len(y) == 16
 
 
 @pytest.mark.parametrize("failed_channel", ["A", "B", "C"])
@@ -547,18 +623,39 @@ def test_english_inspector_preserves_words_when_native_font_requires_fitting(
             value.fontMetrics().horizontalAdvance(value.text())
             <= value.contentsRect().width()
         ), json.dumps(_control_size_diagnostics(value), indent=2)
-        window.resize(1800, 1000)
-        QtTest.QTest.qWait(100)
-        value.setStyleSheet("font-size: 30px;")
-        value.setText("10.000000")
-        assert value._maximum_font_px == 30
-        assert value.font().pixelSize() == 30, json.dumps(
-            _control_size_diagnostics(value), indent=2
-        )
-        assert (
-            value.fontMetrics().horizontalAdvance(value.text())
-            <= value.contentsRect().width()
-        ), json.dumps(_control_size_diagnostics(value), indent=2)
+
+
+def test_readout_retains_readable_requested_size_without_native_font_info(
+    window, monkeypatch
+):
+    monkeypatch.setattr(
+        main_window_module.QtGui,
+        "QFontInfo",
+        lambda font: SimpleNamespace(pixelSize=lambda: -1),
+    )
+    window.resize(1800, 1000)
+    window.show()
+    QtTest.QTest.qWait(100)
+    value = window.readouts["A"]["value"]
+    value.setStyleSheet("font-size: 30px;")
+    value.setText("10.000000")
+    QtTest.QTest.qWait(30)
+    requested_font = QtGui.QFont(value.font())
+    requested_font.setPixelSize(30)
+    requested_metrics = QtGui.QFontMetrics(requested_font, value)
+    assert (
+        requested_metrics.horizontalAdvance(value.text())
+        <= value.contentsRect().width()
+    )
+    assert value._maximum_font_px == 30
+    assert value.font().pixelSize() == 30, json.dumps(
+        _control_size_diagnostics(value), indent=2
+    )
+    assert value.height() >= value.fontMetrics().height()
+    assert (
+        value.fontMetrics().horizontalAdvance(value.text())
+        <= value.contentsRect().width()
+    ), json.dumps(_control_size_diagnostics(value), indent=2)
 
 
 @pytest.mark.parametrize(
@@ -841,8 +938,8 @@ def test_autosave_language_preserves_recovery_status_without_rescanning(
             ) in text
     assert scans == [window.autosave_root]
     log = window.event_log.toPlainText()
-    assert log.count("Recovered 2 interrupted") == 0
-    assert log.count("检测到 2 个异常中断") == (1 if with_recovery else 0)
+    assert log.count("Recovered 2 interrupted") == (1 if with_recovery else 0)
+    assert log.count("检测到 2 个异常中断") == 0
 
 
 def test_readout_adapts_new_digits_without_waiting_for_a_parent_layout(window):
@@ -929,7 +1026,9 @@ def test_long_sampling_interval_keeps_first_sample_and_explains_wait(window):
     assert window.trend_plot._curves["A"].isVisible()
     assert window.trend_plot._curves["A"].opts["symbol"] is not None
     assert window.readouts["A"]["interval"].text() == "Δt 21.1 s"
-    assert "设定采样间隔：21.1 秒" in window.readouts["A"]["time"].toolTip()
+    assert (
+        "Requested sampling interval: 21.1 s" in window.readouts["A"]["time"].toolTip()
+    )
     window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
     assert (
         "Requested sampling interval: 21.1 s" in window.readouts["A"]["time"].toolTip()

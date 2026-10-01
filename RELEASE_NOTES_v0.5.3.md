@@ -2,13 +2,20 @@
 
 2026-10-01
 
+## 默认语言与图表显示
+
+- 首次启动默认 English，右上角 LANGUAGE 可手动选择 English / 中文；
+  保存并恢复用户偏好，已有中文选择保持不变。
+- 移除曲线图中的内嵌 A/B/C 图例。仪器页签、分析通道选择和
+  “Compare all channels（同时显示所有启用通道）”仍可用于单路查看和多路对比。
+
 ## 设备参数和数据切换
 
 - 点击左侧 A/B/C 仪器页签，或在分析仪器下拉框中选一台，参数指标、
   会话信息、趋势、统计和分析会同时切换到该台仪器。
 - 选择单台后自动进入单通道查看；勾选“同时显示所有启用通道”可恢复对比。
 - 切换仪器时重置原仪器的缩放窗口，避免新仪器的数据被旧时间范围隐藏。
-- 单台停止、改测量功能后重启时重置该台的旧时间窗口和手动隐藏状态；
+- 单台停止、改测量功能后重启时重置该台的旧时间窗口；
   其他通道继续采集，未显示通道的重启不会打断当前仪器的缩放查看。
 - 读数卡显示本次采集设定的 Δt，并说明慢采样等待；仪器设置的滚轮操作
   只滚动面板，防止采样间隔、测量功能或量程被意外修改。
@@ -20,7 +27,7 @@
 - 读数卡按可用宽度缩小数字字号，保留完整精密读数和单位；采样间隔与温度
   在窄卡片中分行。覆盖不同字体、原生滚动条与最小窗口的布局验证。
 - 停止后修改下一次测量的功能、型号或地址，不再重标旧会话数据。
-  指标、图例和诊断保留本次采集的配置；CSV 未提供的功能显示未知，避免
+  指标、读数卡和诊断保留本次采集的配置；CSV 未提供的功能显示未知，避免
   把导入数据错误标为当前仪器的 DCV/ACV。
 - 修复 Qt 将字符串枚举保存为字符串后，型号/功能选择错误回退到
   3458A / DCV 的问题；覆盖全部 14 款型号和各自测量功能。
@@ -31,8 +38,7 @@
 - 新采集只有一个样本时显示点标记；各通道共同确定时间轴范围，避免
   不同开始时间、采样速度或空副轴使曲线消失。
 - 手动缩放时保留时间窗口两侧的相邻点，慢速采样曲线跨过窗口时仍可见。
-- 图例手动隐藏状态在实时刷新时保留；明确选择一台仪器后恢复该台显示。
-- 隐藏通道时同步隐藏它的滑动平均线，防止均值线错挂到其他单位的轴。
+- 仅显示所选通道的滑动平均线，防止均值线错挂到其他单位的轴。
 - 修正深度缩放后重复使用旧裁剪缓存的问题；绘图库最低版本为已验证的
   pyqtgraph 0.14。
 - 副 Y 轴可通过轴上的鼠标操作单独缩放；矩形缩放不再被自动 Y 范围覆盖。
@@ -75,7 +81,8 @@
 自动回归数量与 Windows 打包验证结果见对应 GitHub Actions 运行。
 自动测试使用数字孪生、模拟 VISA 后端和离屏 Qt 界面，覆盖三个通道的独立
 点数、同步失败、关闭保存、仪器切换、CSV 往返与大数值缩放。Windows CI
-会另外运行测试并打包 EXE。
+会另外运行测试并打包 EXE。当前修订的 Windows 完整回归和 frozen EXE
+冒烟验证仍待成功结果；构建流程的存在不代表该修订已通过验证。
 
 真实仪表、VISA/GPIB 控制器和固件组合仍需在实验室验收。软件级同步启动
 不提供硬件触发同步。进程突然终止可能丢失尚未同步的队列末尾；已落盘数据保留。
@@ -85,7 +92,12 @@ Windows EXE 包含 Python/Qt/分析依赖，真实 GPIB 仍需匹配控制器的
 
 Selecting A/B/C now opens that instrument's individual measurements, metrics,
 statistics and analysis; the existing all-channel option restores comparison.
+English is the first-launch default, and saved English/Chinese preferences are
+restored. Embedded A/B/C curve legends are removed while instrument selection
+and **Compare all channels** remain available.
 The update fixes multi-axis zoom/clipping, shared VISA manager ownership,
 synchronized startup cancellation, queued samples at shutdown, model/function
 selection, and channel-aligned CSV import with timestamps, units and temperature.
 Hardware acceptance remains pending for each real instrument/backend combination.
+Windows regression and frozen-EXE smoke validation for this revision are pending;
+check the corresponding GitHub Actions run for the result.

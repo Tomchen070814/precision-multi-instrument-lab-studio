@@ -150,8 +150,11 @@ class VirtualSweepWorker(QtCore.QThread):
 class SmuDemoDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.language = getattr(parent, "language", "en")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setWindowTitle("Virtual SMU · Diode I-V / 二极管 I-V 模拟")
+        self.setWindowTitle(
+            self._text("Virtual SMU · Diode I-V", "虚拟 SMU · 二极管 I-V 模拟")
+        )
         self.setStyleSheet(
             APP_STYLE
             + "\nQDialog { background: #080D13; }"
@@ -167,7 +170,12 @@ class SmuDemoDialog(QtWidgets.QDialog):
         self._error = ""
         layout = QtWidgets.QVBoxLayout(self)
         warning = QtWidgets.QLabel(
-            "SIMULATION ONLY · 虚拟 SMU / 模拟 GPIB 指令 · 未连接真实硬件\n三种二极管模型 + 高斯噪声 + 电流限值；I-V 使用模拟实际电压。"
+            self._text(
+                "SIMULATION ONLY · Virtual SMUs and simulated GPIB commands · No physical hardware connected\n"
+                "Three diode models with Gaussian noise and current limits. I-V uses actual simulated voltage.",
+                "仅模拟 · 虚拟 SMU 和模拟 GPIB 指令 · 未连接真实硬件\n"
+                "三种二极管模型、高斯噪声和电流限值；I-V 使用模拟实际电压。",
+            )
         )
         warning.setWordWrap(True)
         layout.addWidget(warning)
@@ -187,13 +195,13 @@ class SmuDemoDialog(QtWidgets.QDialog):
         self.compliance.setDecimals(3)
         self.compliance.setValue(10)
         self.compliance.setSuffix(" mA")
-        self.noise = QtWidgets.QCheckBox("Gaussian noise / 高斯噪声")
+        self.noise = QtWidgets.QCheckBox(self._text("Gaussian noise", "高斯噪声"))
         self.noise.setChecked(True)
         for title, widget in (
-            ("Start / 起点", self.start_v),
-            ("Stop / 终点", self.stop_v),
-            ("Points / 点数", self.points),
-            ("Limit / 限值", self.compliance),
+            (self._text("Start", "起点"), self.start_v),
+            (self._text("Stop", "终点"), self.stop_v),
+            (self._text("Points", "点数"), self.points),
+            (self._text("Limit", "限值"), self.compliance),
         ):
             field = QtWidgets.QVBoxLayout()
             field.addWidget(QtWidgets.QLabel(title))
@@ -202,8 +210,13 @@ class SmuDemoDialog(QtWidgets.QDialog):
         controls.addWidget(self.noise)
         layout.addLayout(controls)
         self.plot = pg.PlotWidget()
-        configure_plot(self.plot, "Voltage / 电压", "Current / 电流", "V", "A")
-        self.plot.addLegend()
+        configure_plot(
+            self.plot,
+            self._text("Voltage", "电压"),
+            self._text("Current", "电流"),
+            "V",
+            "A",
+        )
         self.curves = {
             key: self.plot.plot(name=f"Virtual SMU {key}", pen=pg.mkPen(color, width=2))
             for key, color in zip(
@@ -216,11 +229,13 @@ class SmuDemoDialog(QtWidgets.QDialog):
         row = QtWidgets.QHBoxLayout()
         self.channel = QtWidgets.QComboBox()
         self.channel.addItems(["A+B+C", "A", "B", "C"])
-        self.start_button = QtWidgets.QPushButton("Run A+B+C / 开始模拟")
-        self.stop_button = QtWidgets.QPushButton("Stop / 停止")
-        self.export_button = QtWidgets.QPushButton("Export CSV / 导出")
-        self.reset_button = QtWidgets.QPushButton("Reset view / 重置视图")
-        self.status = QtWidgets.QLabel("Ready / 就绪")
+        self.start_button = QtWidgets.QPushButton(
+            self._text("Run A+B+C", "开始模拟 A+B+C")
+        )
+        self.stop_button = QtWidgets.QPushButton(self._text("Stop", "停止"))
+        self.export_button = QtWidgets.QPushButton(self._text("Export CSV", "导出 CSV"))
+        self.reset_button = QtWidgets.QPushButton(self._text("Reset view", "重置视图"))
+        self.status = QtWidgets.QLabel(self._text("Ready", "就绪"))
         for widget in (
             self.channel,
             self.start_button,
@@ -246,6 +261,9 @@ class SmuDemoDialog(QtWidgets.QDialog):
         self.reset_button.clicked.connect(lambda: self.plot.enableAutoRange())
         self.export_button.clicked.connect(self._export)
         self.stop_button.setEnabled(False)
+
+    def _text(self, english: str, chinese: str) -> str:
+        return chinese if self.language == "zh" else english
 
     def start_sweep(self) -> None:
         if self.worker is not None:
@@ -339,13 +357,18 @@ class SmuDemoDialog(QtWidgets.QDialog):
 
     def _export(self) -> None:
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export virtual sweep", "virtual-diode-iv.csv", "CSV (*.csv)"
+            self,
+            self._text("Export virtual sweep", "导出虚拟扫描"),
+            "virtual-diode-iv.csv",
+            "CSV (*.csv)",
         )
         if path:
             try:
                 self.write_csv(path)
             except OSError as exc:
-                QtWidgets.QMessageBox.warning(self, "Export error / 导出失败", str(exc))
+                QtWidgets.QMessageBox.warning(
+                    self, self._text("Export error", "导出失败"), str(exc)
+                )
 
     def closeEvent(self, event) -> None:
         if self.worker is not None:

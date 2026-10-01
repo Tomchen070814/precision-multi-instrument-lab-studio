@@ -14,7 +14,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self,
         channel: str,
         default_resource: str,
-        language: str = "zh",
+        language: str = "en",
         parent=None,
     ):
         super().__init__(parent)

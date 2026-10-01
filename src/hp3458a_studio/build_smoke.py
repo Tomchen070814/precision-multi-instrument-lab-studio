@@ -18,11 +18,15 @@ from .smu_demo import SmuDemoDialog
 EXPECTED_UNITS = {"A": "V", "B": "Ω", "C": "A"}
 
 
-def _collect_smoke_report(window, demo, done: bool, beats: int) -> dict:
+def _collect_smoke_report(
+    window, demo, done: bool, beats: int, *, interrupted: bool = False
+) -> dict:
     reasons = []
     if not done:
         reasons.append(
-            "Timed out waiting for acquisition and durable journal completion"
+            "Stopped after an unhandled application callback error"
+            if interrupted
+            else "Timed out waiting for acquisition and durable journal completion"
         )
     channels = {}
     for key, expected_unit in EXPECTED_UNITS.items():
@@ -188,7 +192,14 @@ def _capture_ui_evidence(window, demo, report_path: Path, report: dict) -> None:
     report["result"] = "failed" if report["failure_reasons"] else "passed"
 
 
-def start_smoke_test(app, window, report_path: Path) -> None:
+def start_smoke_test(
+    app,
+    window,
+    report_path: Path,
+    *,
+    unhandled_errors: list[str] | None = None,
+) -> None:
+    errors = unhandled_errors if unhandled_errors is not None else []
     window.resize(1600, 960)
     window.channel_c_enabled.setChecked(True)
     window.multi_analysis_check.setChecked(True)
@@ -225,12 +236,20 @@ def start_smoke_test(app, window, report_path: Path) -> None:
     report = None
     app.setQuitOnLastWindowClosed(False)
 
+    def collect_errors() -> None:
+        for error in errors:
+            if error not in report["failure_reasons"]:
+                report["failure_reasons"].append(error)
+        if report["failure_reasons"]:
+            report["result"] = "failed"
+
     def poll() -> None:
         nonlocal beats, closing, report
         beats += 1
         if closing:
             if window._shutdown_complete:
                 timer.stop()
+                collect_errors()
                 report["shutdown_complete"] = True
                 saved = _save_report(report_path, report)
                 app.exit(0 if report["result"] == "passed" and saved else 1)
@@ -239,10 +258,27 @@ def start_smoke_test(app, window, report_path: Path) -> None:
             not any(runtime.running for runtime in window.channels.values())
             and demo.worker is None
         )
-        if not done and time.monotonic() - started < 20:
+        if not done and not errors and time.monotonic() - started < 20:
             return
-        report = _collect_smoke_report(window, demo, done, beats)
-        _capture_ui_evidence(window, demo, report_path, report)
+        # Stop generating work before collecting evidence. If evidence itself
+        # fails, the next timer tick still waits for orderly worker shutdown.
+        closing = True
+        try:
+            report = _collect_smoke_report(
+                window, demo, done, beats, interrupted=bool(errors)
+            )
+            _capture_ui_evidence(window, demo, report_path, report)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Smoke evidence collection failed")
+            report = {
+                "version": __version__,
+                "result": "failed",
+                "failure_reasons": [
+                    f"Evidence collection failed: {type(exc).__name__}: {exc}"
+                ],
+                "gui_timer_ticks": beats,
+            }
+        collect_errors()
         _save_report(
             report_path,
             dict(
@@ -255,7 +291,6 @@ def start_smoke_test(app, window, report_path: Path) -> None:
                 ],
             ),
         )
-        closing = True
         demo._stop()
         demo.close()
         window._smu_demo_dialog = demo

@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import traceback as traceback_module
+from collections.abc import Callable
 from pathlib import Path
 
 import pyqtgraph as pg
@@ -15,7 +16,9 @@ from .diagnostics import configure_logging
 from .main_window import MainWindow
 
 
-def _install_exception_hook() -> None:
+def _install_exception_hook(
+    on_unhandled_exception: Callable[[str], None] | None = None,
+) -> None:
     def handle_exception(exc_type, exc_value, traceback) -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, traceback)
@@ -24,6 +27,13 @@ def _install_exception_hook() -> None:
             "Unhandled application exception",
             exc_info=(exc_type, exc_value, traceback),
         )
+        if on_unhandled_exception is not None:
+            # Automated GUI validation must fail on Qt callback exceptions,
+            # even when a nested error-dialog event loop could finish capture.
+            on_unhandled_exception(
+                f"Unhandled Qt callback: {exc_type.__name__}: {exc_value}"
+            )
+            return
         application = QtWidgets.QApplication.instance()
         if application is not None:
             QtWidgets.QMessageBox.critical(
@@ -91,6 +101,7 @@ def _claim_single_instance(
 
 def main() -> int:
     smoke_path = None
+    smoke_errors: list[str] = []
     try:
         if "--smoke-test" in sys.argv:
             smoke_index = sys.argv.index("--smoke-test")
@@ -123,7 +134,9 @@ def main() -> int:
                 )
             )
         configure_logging(data_directory)
-        _install_exception_hook()
+        _install_exception_hook(
+            on_unhandled_exception=smoke_errors.append if smoke_path else None
+        )
         logging.getLogger("hp3458a_studio").info(
             "Application start | version=%s | platform=%s",
             __version__,
@@ -162,7 +175,7 @@ def main() -> int:
         if smoke_path:
             from .build_smoke import start_smoke_test
 
-            start_smoke_test(app, window, smoke_path)
+            start_smoke_test(app, window, smoke_path, unhandled_errors=smoke_errors)
         screenshot_path = os.environ.get("HP3458A_SCREENSHOT")
         if screenshot_path:
 

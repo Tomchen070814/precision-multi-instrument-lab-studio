@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 import pytest
-from PySide6 import QtCore, QtGui, QtTest
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from shiboken6 import isValid
 
 from hp3458a_studio.smu_demo import (
@@ -49,6 +49,30 @@ def test_virtual_demo_and_transcript_have_readable_dark_background(qt_applicatio
     assert dialog.log.palette().color(QtGui.QPalette.ColorRole.Base).lightness() < 64
     assert dialog.log.palette().color(QtGui.QPalette.ColorRole.Text).lightness() > 180
     dialog.close()
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_demo_follows_parent_language_without_overlay_legends(qt_application, language):
+    parent = QtWidgets.QWidget()
+    parent.language = language
+    dialog = SmuDemoDialog(parent)
+    try:
+        assert dialog.start_button.text() == (
+            "Run A+B+C" if language == "en" else "开始模拟 A+B+C"
+        )
+        assert dialog.noise.text() == (
+            "Gaussian noise" if language == "en" else "高斯噪声"
+        )
+        assert dialog.plot.getPlotItem().legend is None
+        dialog.rows["B"] = [(0.4, 0.4, 0.001, False)]
+        dialog.channel.setCurrentText("B")
+        dialog._draw()
+        assert dialog.curves["B"].isVisible()
+        assert not dialog.curves["A"].isVisible()
+        assert dialog.plot.getPlotItem().legend is None
+    finally:
+        dialog.close()
+        parent.close()
 
 
 @pytest.mark.parametrize("close_method", ["close", "escape", "done"])

@@ -230,9 +230,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = self._create_settings()
-        self.language = str(self.settings.value("language", "zh"))
+        self.language = str(self.settings.value("language", "en"))
         if self.language not in {"zh", "en"}:
-            self.language = "zh"
+            self.language = "en"
         self._static_text_widgets: list[tuple[QtWidgets.QWidget, str]] = []
         self._inspector_control_texts: dict[QtWidgets.QWidget, str] = {}
         self._inspector_control_fit_state: dict[
@@ -389,6 +389,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setStretchFactor(2, 0)
         self.main_splitter.setSizes([330, 980, 290])
         outer.addWidget(self.main_splitter, 1)
+        for plot in (
+            self.trend_plot,
+            self.fft_plot,
+            self.asd_plot,
+            self.hist_plot,
+            self.allan_plot,
+            self.drift_plot,
+        ):
+            legend = plot.getPlotItem().legend
+            if legend is not None:
+                legend.hide()
 
     def _build_header(self) -> QtWidgets.QHBoxLayout:
         layout = QtWidgets.QHBoxLayout()

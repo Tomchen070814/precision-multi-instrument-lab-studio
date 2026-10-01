@@ -1,5 +1,7 @@
 import csv
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -225,13 +227,13 @@ def test_smoke_entrypoint_isolates_logging_settings_and_startup_failures(
     monkeypatch.setattr(
         main_module, "configure_logging", lambda path: captured.update(log=path)
     )
-    monkeypatch.setattr(main_module, "_install_exception_hook", lambda: None)
+    monkeypatch.setattr(main_module, "_install_exception_hook", lambda **kwargs: None)
     monkeypatch.setattr(main_module, "_show_fatal_startup_error", forbidden_user_state)
     monkeypatch.setattr(main_module.logging, "shutdown", lambda: None)
     monkeypatch.setattr(
         main_module.QtCore.QStandardPaths, "writableLocation", forbidden_user_state
     )
-    monkeypatch.setattr(smoke_module, "start_smoke_test", lambda *args: None)
+    monkeypatch.setattr(smoke_module, "start_smoke_test", lambda *args, **kwargs: None)
     assert main_module.main() == int(startup_fails)
     assert captured["log"].name == "logs"
     assert captured["log"].parent == captured["settings"].parent
@@ -240,3 +242,88 @@ def test_smoke_entrypoint_isolates_logging_settings_and_startup_failures(
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["result"] == "failed"
         assert "frozen dependency unavailable" in report["failure_reasons"][0]
+
+
+@pytest.mark.parametrize("phase", ["capture", "shutdown", "evidence"])
+def test_real_smoke_fails_and_stops_threads_after_callback_or_evidence_error(
+    tmp_path, phase
+):
+    # Use a separate offscreen process because the real entrypoint owns its
+    # QApplication and exception hook. This exercises Qt's callback exception
+    # delivery and normal worker shutdown, not a hand-written hook invocation.
+    script = """
+import sys
+from pathlib import Path
+from PySide6 import QtCore, QtWidgets
+from hp3458a_studio import __main__ as entry
+from hp3458a_studio import build_smoke
+
+report_path, phase = sys.argv[1:]
+original_start = build_smoke.start_smoke_test
+
+def injected_error():
+    raise RuntimeError('Injected unhandled Qt callback failure')
+
+def forbidden_modal(*args):
+    raise AssertionError('Smoke opened a modal error dialog')
+
+QtWidgets.QMessageBox.critical = forbidden_modal
+
+def start(app, window, path, **kwargs):
+    original_start(app, window, path, **kwargs)
+    if phase == 'capture':
+        QtCore.QTimer.singleShot(30, injected_error)
+    elif phase == 'shutdown':
+        original_close = window.close
+        def close():
+            QtCore.QTimer.singleShot(0, injected_error)
+            return original_close()
+        window.close = close
+    else:
+        def bad_evidence(*args):
+            raise RuntimeError('Injected evidence failure')
+        build_smoke._capture_ui_evidence = bad_evidence
+
+build_smoke.start_smoke_test = start
+sys.argv = ['program', '--smoke-test', report_path]
+raise SystemExit(entry.main())
+"""
+    report_path = tmp_path / "runtime-error.json"
+    environment = os.environ.copy()
+    environment["QT_QPA_PLATFORM"] = "offscreen"
+    environment.pop("HP3458A_SCREENSHOT", None)
+    environment["PYTHONPATH"] = str(Path(main_module.__file__).parents[1])
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(report_path), phase],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["result"] == "failed"
+    assert report["shutdown_complete"] is True
+    expected = (
+        "Injected evidence failure"
+        if phase == "evidence"
+        else "Injected unhandled Qt callback failure"
+    )
+    assert any(expected in reason for reason in report["failure_reasons"])
+    assert "Smoke opened a modal error dialog" not in result.stderr
+    assert "Destroyed while thread" not in result.stderr
+
+
+def test_normal_application_keeps_its_error_dialog(monkeypatch):
+    previous_hook = sys.excepthook
+    monkeypatch.setattr(sys, "excepthook", previous_hook)
+    dialogs = []
+    monkeypatch.setattr(
+        main_module.QtWidgets.QMessageBox,
+        "critical",
+        lambda *args: dialogs.append(args),
+    )
+    main_module._install_exception_hook()
+    sys.excepthook(RuntimeError, RuntimeError("ordinary application error"), None)
+    assert len(dialogs) == 1
