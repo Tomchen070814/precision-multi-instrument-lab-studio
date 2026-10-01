@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 import pytest
-from PySide6 import QtCore, QtTest
+from PySide6 import QtCore, QtGui, QtTest
 from shiboken6 import isValid
 
 from hp3458a_studio.smu_demo import (
@@ -39,6 +39,16 @@ def test_invalid_sweep_is_rejected_before_start():
         VirtualSweepWorker(SweepConfig(start_v=1, stop_v=0))
     with pytest.raises(ValueError):
         DiodeModel().current(float("nan"), 0.01)
+
+
+def test_virtual_demo_and_transcript_have_readable_dark_background(qt_application):
+    dialog = SmuDemoDialog()
+    dialog.ensurePolished()
+    dialog.log.ensurePolished()
+    assert dialog.palette().color(QtGui.QPalette.ColorRole.Window).lightness() < 64
+    assert dialog.log.palette().color(QtGui.QPalette.ColorRole.Base).lightness() < 64
+    assert dialog.log.palette().color(QtGui.QPalette.ColorRole.Text).lightness() > 180
+    dialog.close()
 
 
 @pytest.mark.parametrize("close_method", ["close", "escape", "done"])

@@ -193,6 +193,7 @@ class ChannelRuntime:
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    AUTOSAVE_STATUS_TEXT = "已开启 · 后台批次 fsync；正常约 200ms，磁盘延迟时窗口会延长"
     CHANNELS: ClassVar[tuple[str, ...]] = ("A", "B", "C")
     DEFAULT_RESOURCES: ClassVar[dict[str, str]] = {
         "A": "GPIB0::21::INSTR",
@@ -226,6 +227,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._inspector_fit_pending = False
         self._inspector_layout_signature: tuple | None = None
         self._inspector_spin_font_px: dict[QtWidgets.QAbstractSpinBox, int] = {}
+        self._recovery_summary: tuple[int, int] | None = None
         self._readout_fit_pending = False
         self._dashboard_fit_pending = False
         self._readout_layout_keys: dict[QtWidgets.QLabel, tuple] = {}
@@ -540,6 +542,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.dashboard_scroll.setMinimumHeight(100)
         self.dashboard_scroll.setWidget(dashboard)
+        dashboard.installEventFilter(self)
+        self.dashboard_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.dashboard_scroll)
 
         self.tabs = QtWidgets.QTabWidget()
@@ -967,12 +971,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addWidget(self._section("所选会话"))
         session_card = Card()
-        form = QtWidgets.QFormLayout(session_card)
+        form = QtWidgets.QVBoxLayout(session_card)
         form.setContentsMargins(12, 11, 12, 11)
-        form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapAllRows)
-        form.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
         self.session_count = QtWidgets.QLabel("0")
         self.session_duration = QtWidgets.QLabel("0 s")
         self.session_rate = QtWidgets.QLabel("—")
@@ -985,20 +985,20 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             label.setObjectName("metricValue")
             label.setStyleSheet("font-size: 12px;")
-        form.addRow("样本", self.session_count)
-        form.addRow("时长", self.session_duration)
-        form.addRow("实际速率", self.session_rate)
-        form.addRow("单位", self.session_unit)
+        for title, value_label in (
+            ("样本", self.session_count),
+            ("时长", self.session_duration),
+            ("实际速率", self.session_rate),
+            ("单位", self.session_unit),
+        ):
+            form.addWidget(QtWidgets.QLabel(title))
+            form.addWidget(value_label)
         layout.addWidget(session_card)
 
         layout.addWidget(self._section("仪表身份"))
         identity_card = Card()
-        identity_form = QtWidgets.QFormLayout(identity_card)
+        identity_form = QtWidgets.QVBoxLayout(identity_card)
         identity_form.setContentsMargins(12, 11, 12, 11)
-        identity_form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapAllRows)
-        identity_form.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
         self.identity_model = QtWidgets.QLabel("—")
         self.identity_resource = QtWidgets.QLabel("—")
         self.identity_fw = QtWidgets.QLabel("—")
@@ -1016,11 +1016,15 @@ class MainWindow(QtWidgets.QMainWindow):
             policy = label.sizePolicy()
             policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
             label.setSizePolicy(policy)
-        identity_form.addRow("Model", self.identity_model)
-        identity_form.addRow("Resource", self.identity_resource)
-        identity_form.addRow("REV", self.identity_fw)
-        identity_form.addRow("OPT", self.identity_option)
-        identity_form.addRow("LINE", self.identity_line)
+        for title, value_label in (
+            ("Model", self.identity_model),
+            ("Resource", self.identity_resource),
+            ("REV", self.identity_fw),
+            ("OPT", self.identity_option),
+            ("LINE", self.identity_line),
+        ):
+            identity_form.addWidget(QtWidgets.QLabel(title))
+            identity_form.addWidget(value_label)
         layout.addWidget(identity_card)
 
         layout.addWidget(self._section("数据"))
@@ -1043,9 +1047,7 @@ class MainWindow(QtWidgets.QMainWindow):
         autosave_layout = QtWidgets.QVBoxLayout(autosave_card)
         autosave_layout.setContentsMargins(12, 10, 12, 10)
         autosave_layout.setSpacing(6)
-        self.autosave_status = QtWidgets.QLabel(
-            "已开启 · 后台批次 fsync；正常约 200ms，磁盘延迟时窗口会延长"
-        )
+        self.autosave_status = QtWidgets.QLabel(self.AUTOSAVE_STATUS_TEXT)
         self.autosave_status.setObjectName("statusGood")
         self.autosave_status.setWordWrap(True)
         self.autosave_path_label = QtWidgets.QLabel(str(self.autosave_root))
@@ -1082,16 +1084,6 @@ class MainWindow(QtWidgets.QMainWindow):
             policy = label.sizePolicy()
             policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
             label.setSizePolicy(policy)
-        # A form's label column needs its natural width; ignoring these labels
-        # collapses it to zero before the fields receive their remaining space.
-        for card_form in (form, identity_form):
-            for row in range(card_form.rowCount()):
-                label = card_form.itemAt(
-                    row, QtWidgets.QFormLayout.ItemRole.LabelRole
-                ).widget()
-                policy = label.sizePolicy()
-                policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Preferred)
-                label.setSizePolicy(policy)
         self.event_log.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Expanding,
@@ -1278,6 +1270,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_channel_c_ui()
         self._update_sync_controls()
         self._update_header_sources()
+        self._update_autosave_status()
         self._inspector_control_texts = {
             control: control.text()
             for control in (
@@ -1566,10 +1559,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._readout_fit_pending = True
             QtCore.QTimer.singleShot(0, self._fit_readout_labels)
         toolbar = getattr(self, "trend_toolbar_scroll", None)
+        dashboard = getattr(self, "dashboard_scroll", None)
         if (
             layout_event
             and (
                 watched is getattr(self, "center_panel", None)
+                or (
+                    dashboard is not None
+                    and watched in (dashboard.widget(), dashboard.viewport())
+                )
                 or (
                     toolbar is not None
                     and watched in (toolbar.widget(), toolbar.viewport())
@@ -1611,7 +1609,14 @@ class MainWindow(QtWidgets.QMainWindow):
             - self.tabs.minimumHeight()
             - self.center_panel.layout().spacing()
         )
-        self.dashboard_scroll.setMaximumHeight(max(100, available))
+        dashboard = self.dashboard_scroll.widget()
+        natural_height = dashboard.heightForWidth(
+            self.dashboard_scroll.viewport().width()
+        )
+        if natural_height < 0:
+            natural_height = dashboard.sizeHint().height()
+        natural_height = max(natural_height, dashboard.minimumSizeHint().height())
+        self.dashboard_scroll.setFixedHeight(min(natural_height, max(0, available)))
 
     def _fit_readout_labels(self) -> None:
         self._readout_fit_pending = False
@@ -4140,18 +4145,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 str(self.autosave_root),
             )
 
-    def _report_recovery_files(self) -> None:
-        recovery_files = list_recovery_files(self.autosave_root)
-        if not recovery_files:
+    def _update_autosave_status(self) -> None:
+        if self._recovery_summary is None:
+            self.autosave_status.setText(tr(self.language, self.AUTOSAVE_STATUS_TEXT))
             return
-        total_bytes = sum(item.size_bytes for item in recovery_files)
+        count, total_bytes = self._recovery_summary
         self.autosave_status.setText(
-            f"Durable autosave active · {len(recovery_files)} interrupted "
+            f"Durable autosave active · {count} interrupted "
             f"capture(s) retained ({total_bytes / 1024:.1f} KiB)"
             if self.language == "en"
-            else f"安全自动保存已开启 · 检测到 {len(recovery_files)} 个"
+            else f"安全自动保存已开启 · 检测到 {count} 个"
             f"中断采集文件（{total_bytes / 1024:.1f} KiB），数据已保留"
         )
+
+    def _report_recovery_files(self) -> None:
+        recovery_files = list_recovery_files(self.autosave_root)
+        self._recovery_summary = (
+            (len(recovery_files), sum(item.size_bytes for item in recovery_files))
+            if recovery_files
+            else None
+        )
+        self._update_autosave_status()
+        if not recovery_files:
+            return
         self._log(
             f"Recovered {len(recovery_files)} interrupted durable capture "
             f"file(s); open the autosave directory to inspect them."

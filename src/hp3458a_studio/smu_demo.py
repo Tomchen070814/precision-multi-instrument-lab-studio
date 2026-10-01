@@ -152,7 +152,11 @@ class SmuDemoDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Virtual SMU · Diode I-V / 二极管 I-V 模拟")
-        self.setStyleSheet(APP_STYLE)
+        self.setStyleSheet(
+            APP_STYLE
+            + "\nQDialog { background: #080D13; }"
+            + "\nQPlainTextEdit { background: #0F141B; color: #DDE7F4; border: 1px solid #263241; }"
+        )
         self.resize(1100, 760)
         self.worker: VirtualSweepWorker | None = None
         self.rows: dict[str, list[tuple[float, float, float, bool]]] = {

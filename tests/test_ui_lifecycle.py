@@ -4,6 +4,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -414,7 +415,12 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
             )
             for label in labels:
                 assert label.width() > 0
-                assert card.rect().contains(label.geometry())
+                assert card.rect().contains(label.geometry()), {
+                    "text": label.text(),
+                    "card_field": field.text(),
+                    "card_rect": card.rect().getRect(),
+                    "label_rect": label.geometry().getRect(),
+                }
                 if label.hasHeightForWidth():
                     assert label.height() >= label.heightForWidth(label.width())
             for index, first in enumerate(labels):
@@ -587,6 +593,76 @@ def test_long_precision_readouts_and_units_stay_inside_cards(window, size, font_
         assert card.rect().contains(value.geometry())
         assert card.rect().contains(unit.geometry())
         assert not value.geometry().intersects(unit.geometry())
+
+
+@pytest.mark.parametrize("size", [(1517, 892), (1600, 1000)])
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_large_window_shows_complete_readouts_and_all_metrics(window, size, language):
+    window.channel_c_enabled.setChecked(True)
+    for channel in window.CHANNELS:
+        runtime = window.channels[channel]
+        runtime.session.replace(
+            np.arange(20) * 0.1,
+            np.linspace(0.9, 1.1, 20),
+            "V",
+            "test",
+            timestamps=1_790_859_600 + np.arange(20) * 0.1,
+        )
+        runtime.sample_interval_s = 0.1
+        runtime.last_temperature = 28.25
+        runtime.minimum, runtime.maximum = 0.9, 1.1
+    window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+    for channel in window.CHANNELS:
+        window._retranslate_readout(channel)
+    window.resize(*size)
+    window.show()
+    QtTest.QTest.qWait(100)
+    scroll = window.dashboard_scroll
+    assert scroll.verticalScrollBar().maximum() == 0
+    assert window.trend_plot.viewport().height() >= 120
+    for card in (*window.readout_cards.values(), *window.metric_cards.values()):
+        bounds = QtCore.QRect(
+            card.mapTo(scroll.viewport(), QtCore.QPoint(0, 0)), card.size()
+        )
+        assert scroll.viewport().rect().contains(bounds), {
+            "dashboard": scroll.viewport().rect().getRect(),
+            "card": bounds.getRect(),
+        }
+
+
+@pytest.mark.parametrize("with_recovery", [False, True])
+def test_autosave_language_preserves_recovery_status_without_rescanning(
+    window, monkeypatch, with_recovery
+):
+    scans = []
+    recovery = [SimpleNamespace(size_bytes=2048)] * 2 if with_recovery else []
+
+    def scan(path):
+        scans.append(path)
+        return recovery
+
+    monkeypatch.setattr(main_window_module, "list_recovery_files", scan)
+    window._report_recovery_files()
+    for language in ("en", "zh", "en"):
+        window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+        text = window.autosave_status.text()
+        if with_recovery:
+            assert "4.0 KiB" in text
+            assert (
+                "2 interrupted capture(s) retained"
+                if language == "en"
+                else "检测到 2 个中断采集文件"
+            ) in text
+        else:
+            assert (
+                "Enabled · background batch fsync"
+                if language == "en"
+                else "已开启 · 后台批次 fsync"
+            ) in text
+    assert scans == [window.autosave_root]
+    log = window.event_log.toPlainText()
+    assert log.count("Recovered 2 interrupted") == 0
+    assert log.count("检测到 2 个异常中断") == (1 if with_recovery else 0)
 
 
 def test_readout_adapts_new_digits_without_waiting_for_a_parent_layout(window):
