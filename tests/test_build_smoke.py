@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6 import QtGui, QtWidgets
 
 import hp3458a_studio.__main__ as main_module
 import hp3458a_studio.build_smoke as smoke_module
@@ -86,6 +87,105 @@ def test_smoke_timeout_report_is_explicit(captures, tmp_path):
     target = tmp_path / "result.json"
     assert smoke_module._save_report(target, report)
     assert json.loads(target.read_text(encoding="utf-8"))["failure_reasons"]
+
+
+@pytest.fixture
+def screenshot_widgets():
+    window = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(window)
+    window.readouts = {}
+    window.readout_cards = {}
+    for key in smoke_module.EXPECTED_UNITS:
+        card = QtWidgets.QWidget()
+        card_layout = QtWidgets.QVBoxLayout(card)
+        label = QtWidgets.QLabel("10.123456789")
+        font = QtGui.QFont(label.font())
+        font.setPixelSize(22)
+        label.setFont(font)
+        label.setFixedSize(320, 42)
+        card_layout.addWidget(label)
+        layout.addWidget(card)
+        window.readouts[key] = {"value": label}
+        window.readout_cards[key] = card
+    window.resize(380, 250)
+    window.show()
+    demo = QtWidgets.QWidget()
+    QtWidgets.QApplication.processEvents()
+    yield window, demo
+    window.close()
+    demo.close()
+    window.deleteLater()
+    demo.deleteLater()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_smoke_screenshot_records_real_qt_fonts_and_geometry(
+    screenshot_widgets, tmp_path
+):
+    window, demo = screenshot_widgets
+    report = {"result": "passed", "failure_reasons": []}
+    path = tmp_path / "validation.json"
+    smoke_module._capture_ui_evidence(window, demo, path, report)
+    assert report["result"] == "passed"
+    assert path.with_suffix(".png").is_file()
+    assert (tmp_path / "validation-smu.png").is_file()
+    assert report["screenshot"]["width"] > 0
+    for evidence in report["readout_layout"].values():
+        assert evidence["requested_font_pixel_size"] == 22
+        assert evidence["effective_font_pixel_size"] >= 12
+        assert evidence["text_fits_width"]
+        assert evidence["text_fits_height"]
+        assert evidence["font_metrics_width"] > 0
+        assert evidence["readout_card_rect"]["width"] > 0
+
+
+def test_smoke_does_not_accept_a_fitting_one_pixel_readout(
+    screenshot_widgets, tmp_path
+):
+    window, demo = screenshot_widgets
+    label = window.readouts["A"]["value"]
+    font = QtGui.QFont(label.font())
+    font.setPixelSize(1)
+    label.setFont(font)
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(
+        window, demo, tmp_path / "validation.json", report
+    )
+    assert report["readout_layout"]["A"]["text_fits_width"]
+    assert report["result"] == "failed"
+    assert any("font is too small" in reason for reason in report["failure_reasons"])
+
+
+def test_smoke_screenshot_failure_cannot_pass(screenshot_widgets, tmp_path):
+    window, demo = screenshot_widgets
+    window.grab = lambda: QtGui.QPixmap()
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(
+        window, demo, tmp_path / "validation.json", report
+    )
+    assert report["result"] == "failed"
+    assert any("screenshot failed" in reason for reason in report["failure_reasons"])
+
+
+def test_smoke_font_info_negative_pixels_does_not_reject_readable_actual_font(
+    screenshot_widgets, tmp_path, monkeypatch
+):
+    window, demo = screenshot_widgets
+    monkeypatch.setattr(
+        smoke_module.QtGui,
+        "QFontInfo",
+        lambda font: SimpleNamespace(pixelSize=lambda: -1),
+    )
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(
+        window, demo, tmp_path / "validation.json", report
+    )
+    assert report["result"] == "passed"
+    assert all(
+        evidence["resolved_font_pixel_size"] == -1
+        and evidence["effective_font_pixel_size"] == 22
+        for evidence in report["readout_layout"].values()
+    )
 
 
 @pytest.mark.parametrize("startup_fails", [False, True])

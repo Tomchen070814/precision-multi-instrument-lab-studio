@@ -50,6 +50,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 3
         run: |
+          $env:QT_QPA_PLATFORM = 'windows'
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           $process = Start-Process -FilePath 'dist/Precision-Multi-Instrument-Lab-Studio.exe' -ArgumentList '--smoke-test', 'dist/frozen-smoke.json' -PassThru
@@ -63,4 +64,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: Windows-frozen-validation
-          path: dist/frozen-smoke.json
+          path: |
+            dist/frozen-smoke.json
+            dist/frozen-smoke*.png

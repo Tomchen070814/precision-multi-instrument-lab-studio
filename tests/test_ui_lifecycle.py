@@ -42,6 +42,7 @@ def _control_size_diagnostics(control):
         "text": text,
         "own_style": control.styleSheet(),
         "font": control.font().toString(),
+        "requested_font_px": control.font().pixelSize(),
         "resolved_font_px": QtGui.QFontInfo(control.font()).pixelSize(),
         "metrics_dpi": metrics.fontDpi(),
         "metrics_height": metrics.height(),
@@ -405,13 +406,16 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
 
         assert scroll.width() == 260
         assert scroll.viewport().width() == 252
-        assert scroll.widget().width() <= scroll.viewport().width(), {
-            type(child).__name__ + ": " + getattr(child, "text", lambda: "")(): (
-                _control_size_diagnostics(child)
-            )
-            for child in scroll.widget().findChildren(QtWidgets.QWidget)
-            if child.minimumSizeHint().width() > scroll.viewport().width() - 28
-        }
+        assert scroll.widget().width() <= scroll.viewport().width(), json.dumps(
+            {
+                type(child).__name__ + ": " + getattr(child, "text", lambda: "")(): (
+                    _control_size_diagnostics(child)
+                )
+                for child in scroll.widget().findChildren(QtWidgets.QWidget)
+                if child.minimumSizeHint().width() > scroll.viewport().width() - 28
+            },
+            indent=2,
+        )
         assert scroll.horizontalScrollBar().maximum() == 0
         assert scroll.verticalScrollBar().maximum() > 0
         for spin in (window.rolling_spin, window.sigma_spin):
@@ -464,7 +468,16 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
         app.setStyle(QtWidgets.QStyleFactory.create(previous_style))
 
 
-def test_english_inspector_preserves_words_when_native_font_requires_fitting(window):
+@pytest.mark.parametrize("font_info_unavailable", [False, True])
+def test_english_inspector_preserves_words_when_native_font_requires_fitting(
+    window, monkeypatch, font_info_unavailable
+):
+    if font_info_unavailable:
+        monkeypatch.setattr(
+            main_window_module.QtGui,
+            "QFontInfo",
+            lambda font: SimpleNamespace(pixelSize=lambda: -1),
+        )
     window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
     scroll = window.inspector_scroll
     scroll.setMaximumWidth(260)
@@ -481,17 +494,17 @@ def test_english_inspector_preserves_words_when_native_font_requires_fitting(win
     assert window._inspector_control_texts[control] == canonical_text
     assert " ".join(control.text().split()) == canonical_text
     assert "Normalize" in control.text().splitlines()
-    assert QtGui.QFontInfo(control.font()).pixelSize() < 48
+    assert 1 < control.font().pixelSize() < 48
     assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28, (
-        _control_size_diagnostics(control)
+        json.dumps(_control_size_diagnostics(control), indent=2)
     )
     assert all(
         control.fontMetrics().horizontalAdvance(line) <= control.width() - 26
         for line in control.text().splitlines()
     )
-    fitted_font_px = QtGui.QFontInfo(control.font()).pixelSize()
+    fitted_font_px = control.font().pixelSize()
     window._fit_inspector_controls()
-    assert QtGui.QFontInfo(control.font()).pixelSize() == fitted_font_px
+    assert control.font().pixelSize() == fitted_font_px
     window._retranslate_ui()
     assert " ".join(control.text().split()) == canonical_text
     assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
@@ -504,10 +517,67 @@ def test_english_inspector_preserves_words_when_native_font_requires_fitting(win
     scroll.setMaximumWidth(wide_width)
     scroll.setMinimumWidth(wide_width)
     QtTest.QTest.qWait(100)
-    assert QtGui.QFontInfo(control.font()).pixelSize() == 48
+    assert control.font().pixelSize() == 48
     assert control.styleSheet() == requested_style
     assert " ".join(control.text().split()) == canonical_text
     assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+    if font_info_unavailable:
+        for spin in (window.rolling_spin, window.sigma_spin):
+            spin.setValue(spin.maximum())
+            spin.setStyleSheet("font-size: 24px;")
+            spin.ensurePolished()
+            spin.lineEdit().setStyleSheet("")
+            spin.lineEdit().ensurePolished()
+            window._inspector_spin_font_px.pop(spin, None)
+        window._fit_inspector_controls()
+        for spin in (window.rolling_spin, window.sigma_spin):
+            edit = spin.lineEdit()
+            assert window._inspector_spin_font_px[spin] == 24
+            assert edit.font().pixelSize() > 1
+            assert (
+                edit.fontMetrics().horizontalAdvance(spin.text())
+                <= edit.contentsRect().width()
+            ), json.dumps(_control_size_diagnostics(edit), indent=2)
+        value = window.readouts["A"]["value"]
+        value.setStyleSheet("font-size: 32px;")
+        value.setText("123456789012345.6789")
+        assert value._maximum_font_px == 32
+        assert value.font().pixelSize() > 1
+        assert (
+            value.fontMetrics().horizontalAdvance(value.text())
+            <= value.contentsRect().width()
+        ), json.dumps(_control_size_diagnostics(value), indent=2)
+        window.resize(1800, 1000)
+        QtTest.QTest.qWait(100)
+        value.setStyleSheet("font-size: 30px;")
+        value.setText("10.000000")
+        assert value._maximum_font_px == 30
+        assert value.font().pixelSize() == 30, json.dumps(
+            _control_size_diagnostics(value), indent=2
+        )
+        assert (
+            value.fontMetrics().horizontalAdvance(value.text())
+            <= value.contentsRect().width()
+        ), json.dumps(_control_size_diagnostics(value), indent=2)
+
+
+@pytest.mark.parametrize(
+    ("pixel_size", "point_size", "dpi", "metric_height", "expected"),
+    [(24, -1, 144, 35, 24), (-1, 12, 144, 30, 24), (-1, -1, 96, 17, 17)],
+)
+def test_font_pixel_size_uses_requested_size_and_paint_device_fallbacks(
+    pixel_size, point_size, dpi, metric_height, expected
+):
+    font = SimpleNamespace(
+        pixelSize=lambda: pixel_size,
+        pointSizeF=lambda: point_size,
+    )
+    paint_device = SimpleNamespace(
+        font=lambda: font,
+        logicalDpiY=lambda: dpi,
+        fontMetrics=lambda: SimpleNamespace(height=lambda: metric_height),
+    )
+    assert main_window_module._font_pixel_size(paint_device) == expected
 
 
 def test_inspector_fitting_invalidates_stale_native_checkbox_size_hint(window):

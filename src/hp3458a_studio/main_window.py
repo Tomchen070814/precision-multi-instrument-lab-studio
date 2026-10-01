@@ -69,6 +69,17 @@ from .workers import (
 logger = logging.getLogger(__name__)
 
 
+def _font_pixel_size(widget: QtWidgets.QWidget) -> int:
+    """Get a usable requested pixel size even when native font info is missing."""
+    font = widget.font()
+    if font.pixelSize() > 0:
+        return font.pixelSize()
+    points = font.pointSizeF()
+    if math.isfinite(points) and points > 0:
+        return max(1, round(points * widget.logicalDpiY() / 72))
+    return max(1, widget.fontMetrics().height())
+
+
 class PrecisionValueLabel(QtWidgets.QLabel):
     """Keep every digit visible using this widget's own paint-device metrics."""
 
@@ -88,7 +99,7 @@ class PrecisionValueLabel(QtWidgets.QLabel):
         try:
             super().setStyleSheet(style)
             self.ensurePolished()
-            self._maximum_font_px = QtGui.QFontInfo(self.font()).pixelSize()
+            self._maximum_font_px = _font_pixel_size(self)
         finally:
             self._fitting = False
         self._fit_text()
@@ -1731,7 +1742,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # font changes can leave that cache at the previous font size.
             # Reapplying the same icon invalidates it without changing content.
             control.setIcon(control.icon())
-            font_px = max(1, QtGui.QFontInfo(control.font()).pixelSize())
+            font_px = _font_pixel_size(control)
             # English words stay intact. A native style can report a larger
             # minimum than the text metrics predict; reduce the requested font
             # only when wrapping complete words still cannot fit that minimum.
@@ -1790,7 +1801,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if edit.contentsRect().width() <= 0:
                 continue
             maximum_px = self._inspector_spin_font_px.setdefault(
-                spin, QtGui.QFontInfo(edit.font()).pixelSize()
+                spin, _font_pixel_size(edit)
             )
             samples = [
                 spin.prefix() + spin.textFromValue(value) + spin.suffix()

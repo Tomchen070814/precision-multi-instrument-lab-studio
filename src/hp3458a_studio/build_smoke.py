@@ -9,7 +9,7 @@ import math
 import time
 from pathlib import Path
 
-from PySide6 import QtCore
+from PySide6 import QtCore, QtGui
 
 from . import __version__
 from .models import MeasurementFunction
@@ -98,7 +98,98 @@ def _save_report(report_path: Path, report: dict) -> bool:
         return False
 
 
+def _capture_ui_evidence(window, demo, report_path: Path, report: dict) -> None:
+    def widget_rect(widget) -> dict:
+        origin = widget.mapTo(window, QtCore.QPoint(0, 0))
+        return {
+            "x": origin.x(),
+            "y": origin.y(),
+            "width": widget.width(),
+            "height": widget.height(),
+        }
+
+    image_path = report_path.with_suffix(".png")
+    try:
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        pixmap = window.grab()
+        if pixmap.isNull() or not pixmap.save(str(image_path), "PNG"):
+            raise OSError("Qt could not save the main-window PNG")
+        report["screenshot"] = {
+            "file": image_path.name,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "device_pixel_ratio": pixmap.devicePixelRatio(),
+        }
+        readout_evidence = {}
+        for key in EXPECTED_UNITS:
+            label = window.readouts[key]["value"]
+            metrics = label.fontMetrics()
+            content = label.contentsRect()
+            width = metrics.horizontalAdvance(label.text())
+            height = metrics.height()
+            requested_pixels = label.font().pixelSize()
+            points = label.font().pointSizeF()
+            effective_pixels = (
+                requested_pixels
+                if requested_pixels > 0
+                else (
+                    max(1, round(points * label.logicalDpiY() / 72))
+                    if math.isfinite(points) and points > 0
+                    else max(1, height)
+                )
+            )
+            readout_evidence[key] = {
+                "text": label.text(),
+                "requested_font_pixel_size": requested_pixels,
+                "effective_font_pixel_size": effective_pixels,
+                "resolved_font_pixel_size": QtGui.QFontInfo(label.font()).pixelSize(),
+                "font_point_size": label.font().pointSizeF(),
+                "logical_dpi_y": label.logicalDpiY(),
+                "font_metrics_width": width,
+                "font_metrics_height": height,
+                "label_rect": widget_rect(label),
+                "readout_card_rect": widget_rect(window.readout_cards[key]),
+                "contents_rect": {
+                    "x": content.x(),
+                    "y": content.y(),
+                    "width": content.width(),
+                    "height": content.height(),
+                },
+                "visible": label.isVisibleTo(window),
+                "text_fits_width": width <= content.width(),
+                "text_fits_height": height <= content.height(),
+            }
+            if effective_pixels < 12:
+                report["failure_reasons"].append(
+                    f"DMM {key} readout font is too small to read in the wide smoke window: "
+                    f"{effective_pixels}px (minimum 12px)"
+                )
+            if width > content.width() or height > content.height():
+                report["failure_reasons"].append(
+                    f"DMM {key} readout text exceeds its available rectangle: "
+                    f"text={width}x{height}, available={content.width()}x{content.height()}"
+                )
+        report["readout_layout"] = readout_evidence
+    except (OSError, RuntimeError, ValueError) as exc:
+        report["failure_reasons"].append(f"Main-window screenshot failed: {exc}")
+    smu_image_path = image_path.with_name(f"{image_path.stem}-smu.png")
+    try:
+        pixmap = demo.grab()
+        if pixmap.isNull() or not pixmap.save(str(smu_image_path), "PNG"):
+            raise OSError("Qt could not save the virtual-SMU PNG")
+        report["virtual_smu_screenshot"] = {
+            "file": smu_image_path.name,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "device_pixel_ratio": pixmap.devicePixelRatio(),
+        }
+    except (OSError, RuntimeError, ValueError) as exc:
+        report["virtual_smu_screenshot_error"] = str(exc)
+    report["result"] = "failed" if report["failure_reasons"] else "passed"
+
+
 def start_smoke_test(app, window, report_path: Path) -> None:
+    window.resize(1600, 960)
     window.channel_c_enabled.setChecked(True)
     window.multi_analysis_check.setChecked(True)
     for check in window.sync_channel_checks.values():
@@ -151,6 +242,7 @@ def start_smoke_test(app, window, report_path: Path) -> None:
         if not done and time.monotonic() - started < 20:
             return
         report = _collect_smoke_report(window, demo, done, beats)
+        _capture_ui_evidence(window, demo, report_path, report)
         _save_report(
             report_path,
             dict(
