@@ -11,7 +11,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6 import QtCore, QtTest, QtWidgets
+    from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 except ImportError as exc:
     pytest.skip(str(exc), allow_module_level=True)
 
@@ -32,6 +32,23 @@ def _wait_until(predicate, timeout_ms=2500):
             return True
         QtTest.QTest.qWait(10)
     return predicate()
+
+
+def test_reconnection_warning_is_nonmodal_and_keeps_existing_samples(window):
+    window.channels["A"].session.append(Measurement(0, 10, "V"))
+    window.channels["B"].session.append(Measurement(0, 20, "V"))
+    window._worker_recovering("A", 1, 0.5, "mock VISA timeout")
+    warning = window._hardware_warnings["A"]
+    assert warning.isVisible() and not warning.isModal()
+    assert window.channels["A"].state == "正在重连"
+    ticks = []
+    QtCore.QTimer.singleShot(0, lambda: ticks.append(1))
+    assert _wait_until(lambda: ticks)
+    assert window.channels["A"].session.values == [10]
+    assert window.channels["B"].session.values == [20]
+    window._worker_recovered("A")
+    assert window.channels["A"].state == "正在采集"
+    warning.close()
 
 
 @pytest.fixture(scope="module")
@@ -361,6 +378,8 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
             "C:/Users/Windows-Measurement-Operator/AppData/Local/"
             "Precision Multi-Instrument Lab Studio/autosave/2026-10-01"
         )
+        window.rolling_spin.setValue(window.rolling_spin.maximum())
+        window.sigma_spin.setValue(window.sigma_spin.maximum())
         window.resize(1180, 720)
         window.show()
         QtTest.QTest.qWait(100)
@@ -377,6 +396,12 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
         }
         assert scroll.horizontalScrollBar().maximum() == 0
         assert scroll.verticalScrollBar().maximum() > 0
+        for spin in (window.rolling_spin, window.sigma_spin):
+            edit = spin.lineEdit()
+            assert (
+                edit.fontMetrics().horizontalAdvance(spin.text())
+                <= edit.contentsRect().width()
+            )
         for field in (
             window.session_count,
             window.identity_model,
@@ -515,7 +540,11 @@ def test_readout_interval_and_trend_toolbar_remain_readable(window, size, langua
             control.mapTo(toolbar.viewport(), QtCore.QPoint(0, 0)), control.size()
         )
         assert toolbar.viewport().rect().contains(bounds)
-        assert control.width() >= control.sizeHint().width()
+        assert control.width() >= control.sizeHint().width(), {
+            "text": getattr(control, "text", lambda: "")(),
+            "width": control.width(),
+            "hint": control.sizeHint().width(),
+        }
         assert control.height() >= control.sizeHint().height()
 
 
@@ -543,11 +572,35 @@ def test_long_precision_readouts_and_units_stay_inside_cards(window, size, font_
             window.readouts[channel]["unit"],
         )
         assert value.text() == value_text
-        assert value.fontMetrics().horizontalAdvance(value.text()) <= value.width()
+        assert value.fontMetrics().horizontalAdvance(value.text()) <= value.width(), {
+            "font": value.font().toString(),
+            "dpi": value.logicalDpiX(),
+            "detached_width": QtGui.QFontMetrics(value.font()).horizontalAdvance(
+                value.text()
+            ),
+            "device_width": QtGui.QFontMetrics(value.font(), value).horizontalAdvance(
+                value.text()
+            ),
+            "label_width": value.width(),
+        }
         assert unit.width() >= unit.sizeHint().width()
         assert card.rect().contains(value.geometry())
         assert card.rect().contains(unit.geometry())
         assert not value.geometry().intersects(unit.geometry())
+
+
+def test_readout_adapts_new_digits_without_waiting_for_a_parent_layout(window):
+    window.resize(1180, 720)
+    window.show()
+    QtTest.QTest.qWait(100)
+    value = window.readouts["A"]["value"]
+    value.setStyleSheet("font-size: 32px;")
+    for text in ("1.0", "0.010000021768000000000", "1.0"):
+        value.setText(text)
+        assert value.text() == text
+        assert (
+            value.fontMetrics().horizontalAdvance(text) <= value.contentsRect().width()
+        )
 
 
 @pytest.mark.parametrize(

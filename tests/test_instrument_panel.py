@@ -141,18 +141,21 @@ def test_wheel_over_setting_scrolls_panel_without_editing_it(app):
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("font_family", ["Segoe UI", "Courier New"])
 @pytest.mark.parametrize("panel_style", ["Windows", "Fusion"], indirect=True)
 @pytest.mark.parametrize(
     "model", [InstrumentModel.KEYSIGHT_3458A, InstrumentModel.FLUKE_8508A]
 )
 def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
-    app, language, model, panel_style
+    app, language, model, panel_style, font_family
 ):
     window = QtWidgets.QWidget()
     # Reserve a real vertical scrollbar width even on macOS, where overlay
     # scrollbars otherwise hide the narrow Windows/Linux viewport regression.
     window.setStyleSheet(
-        APP_STYLE + "\nQScrollBar:vertical { width: 24px; min-width: 24px; }"
+        APP_STYLE
+        + f'\nQWidget {{ font-family: "{font_family}"; }}'
+        + "\nQScrollBar:vertical { width: 24px; min-width: 24px; }"
     )
     window.resize(1180, 800)
     layout = QtWidgets.QHBoxLayout(window)

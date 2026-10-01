@@ -94,13 +94,21 @@ performance improvements.
   channel's independent time axis.
 - Persistent rotating logs survive shutdowns and crashes. Each file is limited
   to 5 MB, with up to four generations retained.
-- In precision mode, every received sample is immediately appended to CSV and
-  committed with `flush + fsync`.
+- Acquisition, filesystem commits, and long-session FFT/Allan calculations run
+  on background threads. The GUI renders their results.
+- Precision samples enter a bounded save queue. Background batches use
+  `flush + fsync`, normally within about 200 ms; delayed storage extends the
+  window. Stop/close drains every accepted row before finalization.
+- A disconnected DMM retries transient transport failures up to five times with
+  cancellable backoff, preserving its original session and sample count while
+  other channels continue.
 - If VISA/GPIB disconnects, Windows crashes, or the process terminates
   unexpectedly, committed samples remain available in a directly readable
   recovery file.
 - Incomplete recovery files are detected at startup, and the autosave directory
   can be opened directly from the right-side panel.
+- A virtual three-SMU diode I-V demo includes Gaussian noise, current compliance,
+  individual channel plots and CSV export. It never controls a physical SMU.
 - One-click ZIP diagnostic report containing an HTML summary, JSON state, current
   events, and historical error logs.
 - Diagnostic reports exclude measurement samples to avoid unintentionally

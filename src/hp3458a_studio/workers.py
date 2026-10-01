@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
 
+import numpy as np
 from PySide6 import QtCore
+
+try:
+    import pyvisa
+except ImportError:  # pragma: no cover - connection diagnostics explain this
+    pyvisa = None
 
 from .connection_diagnostics import (
     ConnectionPreflightError,
@@ -15,12 +22,54 @@ from .connection_diagnostics import (
 from .drivers import (
     AcquisitionConfig,
     InstrumentDriver,
+    InstrumentError,
     MeasurementFunction,
     discover_visa_resources,
 )
 from .models import InstrumentModel
 
 logger = logging.getLogger(__name__)
+
+
+def _retryable_transport_error(error: Exception) -> bool:
+    """Recognize transport failures even after a driver adds its context."""
+    retryable_codes = (
+        {
+            pyvisa.constants.StatusCode.error_timeout,
+            pyvisa.constants.StatusCode.error_connection_lost,
+            pyvisa.constants.StatusCode.error_io,
+            pyvisa.constants.StatusCode.error_no_listeners,
+            pyvisa.constants.StatusCode.error_resource_not_found,
+            pyvisa.constants.StatusCode.error_invalid_object,
+        }
+        if pyvisa is not None
+        else set()
+    )
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, ConnectionError)):
+            return True
+        if (
+            pyvisa is not None
+            and isinstance(current, pyvisa.errors.VisaIOError)
+            and current.error_code in retryable_codes
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _validate_reading(reading) -> None:
+    if (
+        not math.isfinite(float(reading.value))
+        or abs(float(reading.value)) >= 9e36
+        or not math.isfinite(float(reading.elapsed_s))
+        or float(reading.elapsed_s) < 0
+        or not math.isfinite(reading.timestamp.timestamp())
+    ):
+        raise InstrumentError("Invalid/overflow measurement; sample was not saved")
 
 
 class PrecisionAcquisitionWorker(QtCore.QThread):
@@ -30,6 +79,8 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
     failed = QtCore.Signal(str)
     connection_issue = QtCore.Signal(object)
     stopped = QtCore.Signal()
+    recovering = QtCore.Signal(int, float, str)
+    recovered = QtCore.Signal()
 
     def __init__(
         self,
@@ -38,6 +89,7 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
         temperature_interval_s: float = 15.0,
         start_gate: threading.Event | None = None,
         preflight: bool = False,
+        reconnect_delays_s: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0, 8.0),
     ):
         super().__init__()
         self.driver = driver
@@ -48,6 +100,14 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
         self._stop_event = threading.Event()
         self.completed_target = False
         self.samples_acquired = 0
+        if any(not math.isfinite(delay) or delay < 0 for delay in reconnect_delays_s):
+            raise ValueError("Reconnect delays must be finite and nonnegative")
+        self.reconnect_delays_s = tuple(reconnect_delays_s)
+        self.reconnect_attempts = 0
+        self._consecutive_reconnects = 0
+        self._ever_connected = False
+        self._capture_started_at: float | None = None
+        self._recovery_pending = False
 
     def request_stop(self) -> None:
         self._stop_event.set()
@@ -56,8 +116,61 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
         except Exception:
             logger.exception("Precision acquisition I/O cancellation failed")
 
+    def _connect_and_configure(self) -> None:
+        if self._stop_event.is_set():
+            return
+        identity = self.driver.connect()
+        self._ever_connected = True
+        if self._stop_event.is_set():
+            return
+        self.identity_ready.emit(identity)
+        self.driver.configure(self.config)
+        if self._capture_started_at is not None:
+            # Driver.connect() resets its clock. Reconnection belongs to the
+            # same capture, including the elapsed time spent disconnected.
+            self.driver.started_at = self._capture_started_at
+
+    def _recover(self, error: Exception) -> bool:
+        while not self._stop_event.is_set():
+            if not _retryable_transport_error(error):
+                raise error
+            if self._consecutive_reconnects >= len(self.reconnect_delays_s):
+                raise InstrumentError(
+                    "Automatic reconnect exhausted after "
+                    f"{self._consecutive_reconnects} attempts: {error}"
+                ) from error
+            # Close only this instrument's session. Closing before disconnect
+            # also avoids reset commands on a broken 3458A holding the bus.
+            try:
+                self.driver.cancel_pending_io()
+            except Exception:
+                logger.exception("Failed to close disconnected instrument session")
+            try:
+                self.driver.disconnect()
+            except Exception:
+                logger.exception("Failed to release disconnected instrument session")
+            delay = self.reconnect_delays_s[self._consecutive_reconnects]
+            self._consecutive_reconnects += 1
+            self.reconnect_attempts += 1
+            self._recovery_pending = True
+            self.recovering.emit(self._consecutive_reconnects, delay, str(error))
+            logger.warning(
+                "Instrument reconnect pending | attempt=%s | delay=%s | error=%s",
+                self._consecutive_reconnects,
+                delay,
+                error,
+            )
+            if self._stop_event.wait(delay):
+                return False
+            try:
+                self._connect_and_configure()
+            except Exception as next_error:  # noqa: BLE001 - classified below
+                error = next_error
+            else:
+                return not self._stop_event.is_set()
+        return False
+
     def run(self) -> None:
-        connection_complete = False
         try:
             if self._stop_event.is_set():
                 return
@@ -77,12 +190,11 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                         raise ConnectionPreflightError(diagnostic)
             if self._stop_event.is_set():
                 return
-            identity = self.driver.connect()
-            connection_complete = True
-            if self._stop_event.is_set():
-                return
-            self.identity_ready.emit(identity)
-            self.driver.configure(self.config)
+            try:
+                self._connect_and_configure()
+            except Exception as exc:  # noqa: BLE001 - only transport errors retry
+                if not self._recover(exc):
+                    return
             if self._stop_event.is_set():
                 return
             if self.start_gate is not None:
@@ -92,15 +204,31 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                         return
             # Elapsed time begins at the acquisition release point, not while
             # VISA connection/configuration is still in progress.
-            self.driver.started_at = time.monotonic()
+            self._capture_started_at = time.monotonic()
+            self.driver.started_at = self._capture_started_at
             next_sample = time.monotonic()
             next_temperature = 0.0
             while not self._stop_event.is_set():
                 now = time.monotonic()
                 include_temperature = now >= next_temperature
-                reading = self.driver.read_single(
-                    include_temperature=include_temperature
-                )
+                try:
+                    reading = self.driver.read_single(
+                        include_temperature=include_temperature
+                    )
+                except Exception as exc:  # noqa: BLE001 - only transport errors retry
+                    if not self._recover(exc):
+                        return
+                    next_sample = time.monotonic()
+                    next_temperature = 0.0
+                    continue
+                if self._stop_event.is_set():
+                    return
+                _validate_reading(reading)
+                reading.elapsed_s = time.monotonic() - self._capture_started_at
+                self._consecutive_reconnects = 0
+                if self._recovery_pending:
+                    self._recovery_pending = False
+                    self.recovered.emit()
                 if include_temperature:
                     next_temperature = time.monotonic() + self.temperature_interval_s
                 self.measurement_ready.emit(reading)
@@ -127,7 +255,7 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
         except Exception as exc:
             if self._stop_event.is_set():
                 logger.info("Precision acquisition worker stopped during pending I/O")
-            elif not connection_complete:
+            elif not self._ever_connected:
                 model = getattr(
                     self.driver,
                     "instrument_model",
@@ -227,6 +355,23 @@ class BurstAcquisitionWorker(QtCore.QThread):
                 function=self.function,
                 measurement_range=self.measurement_range,
             )
+            if self._stop_event.is_set():
+                return
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
+            if (
+                x.ndim != 1
+                or y.ndim != 1
+                or x.size != self.count
+                or y.size != self.count
+                or not np.all(np.isfinite(x))
+                or not np.all(np.isfinite(y))
+                or np.any(x < 0)
+                or np.any(np.abs(y) >= 9e36)
+            ):
+                raise InstrumentError(
+                    "Invalid/overflow burst measurements; batch was not saved"
+                )
             self.result_ready.emit(x, y)
         except ConnectionPreflightError as exc:
             logger.error(

@@ -70,6 +70,11 @@ def estimate_sample_period(elapsed_s: np.ndarray | list[float]) -> float:
     return float(np.median(differences)) if differences.size else 1.0
 
 
+def has_time_gaps(elapsed_s: np.ndarray) -> bool:
+    x = np.asarray(elapsed_s, dtype=float)
+    return bool(x.size > 3 and np.any(np.diff(x) > 1.5 * estimate_sample_period(x)))
+
+
 def spectrum(
     values: np.ndarray | list[float],
     sample_period_s: float,

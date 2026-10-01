@@ -90,6 +90,11 @@ def _claim_single_instance(
 
 def main() -> int:
     try:
+        smoke_path = None
+        if "--smoke-test" in sys.argv:
+            smoke_index = sys.argv.index("--smoke-test")
+            smoke_path = Path(sys.argv[smoke_index + 1]).resolve()
+            del sys.argv[smoke_index : smoke_index + 2]
         os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
         pg.setConfigOptions(antialias=False, useOpenGL=False)
         app = QtWidgets.QApplication(sys.argv)
@@ -110,7 +115,9 @@ def main() -> int:
             __version__,
             sys.platform,
         )
-        instance_server, is_primary = _claim_single_instance(app)
+        instance_server, is_primary = (
+            (None, True) if smoke_path else _claim_single_instance(app)
+        )
         if not is_primary:
             logging.getLogger("hp3458a_studio").info(
                 "Existing application instance activated"
@@ -119,6 +126,15 @@ def main() -> int:
 
         font = QtGui.QFont("Segoe UI", 10)
         app.setFont(font)
+        smoke_directory = None
+        if smoke_path:
+            smoke_directory = QtCore.QTemporaryDir()
+            isolated_settings = QtCore.QSettings(
+                str(Path(smoke_directory.path()) / "settings.ini"),
+                QtCore.QSettings.Format.IniFormat,
+            )
+            MainWindow._create_settings = staticmethod(lambda: isolated_settings)
+            os.environ["LOCALAPPDATA"] = smoke_directory.path()
         window = MainWindow()
 
         def activate_window() -> None:
@@ -138,6 +154,10 @@ def main() -> int:
         if instance_server is not None:
             instance_server.newConnection.connect(activate_window)
         window.show()
+        if smoke_path:
+            from .build_smoke import start_smoke_test
+
+            start_smoke_test(app, window, smoke_path)
         screenshot_path = os.environ.get("HP3458A_SCREENSHOT")
         if screenshot_path:
 

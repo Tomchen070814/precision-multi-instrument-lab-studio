@@ -47,6 +47,9 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         outer.addWidget(self._field("数据来源", self.driver_combo))
 
         resource_row = QtWidgets.QHBoxLayout()
+        # Keep this three-control row inside the narrow sidebar even when
+        # Windows' real scrollbar and Segoe UI metrics consume more width.
+        resource_row.setSpacing(4)
         self.resource_combo = QtWidgets.QComboBox()
         self.resource_combo.setEditable(True)
         self.resource_combo.addItem(self.default_resource)
