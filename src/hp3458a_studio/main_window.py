@@ -1712,12 +1712,25 @@ class MainWindow(QtWidgets.QMainWindow):
             previous = self._inspector_control_fit_state.get(control)
             own_style = control.styleSheet()
             if previous is not None and own_style == previous[2]:
-                if context == previous[0] and control.text() == previous[3]:
+                if (
+                    context == previous[0]
+                    and control.text() == previous[3]
+                    and control.minimumSizeHint().width() <= available_width
+                    and all(
+                        control.fontMetrics().horizontalAdvance(line)
+                        <= available_width - 26
+                        for line in control.text().splitlines()
+                    )
+                ):
                     continue
                 own_style = previous[1]
                 if control.styleSheet() != own_style:
                     control.setStyleSheet(own_style)
             control.ensurePolished()
+            # QAbstractButton caches its native size hint. Windows stylesheet
+            # font changes can leave that cache at the previous font size.
+            # Reapplying the same icon invalidates it without changing content.
+            control.setIcon(control.icon())
             font_px = max(1, QtGui.QFontInfo(control.font()).pixelSize())
             # English words stay intact. A native style can report a larger
             # minimum than the text metrics predict; reduce the requested font
@@ -1742,7 +1755,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
                     if control.text() != wrapped:
                         control.setText(wrapped)
-                    overflow = control.minimumSizeHint().width() - available_width
+                    rendered_width = max(
+                        (
+                            metrics.horizontalAdvance(line)
+                            for line in control.text().splitlines()
+                        ),
+                        default=0,
+                    )
+                    overflow = max(
+                        control.minimumSizeHint().width() - available_width,
+                        rendered_width + 26 - available_width,
+                    )
                     if overflow <= 0:
                         break
                     wrap_width = max(1, wrap_width - overflow - 2)
@@ -1751,12 +1774,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 font_px -= 1
                 control.setStyleSheet(f"{own_style}\nfont-size: {font_px}px;")
                 control.ensurePolished()
-            self._inspector_control_fit_state[control] = (
-                context,
-                own_style,
-                control.styleSheet(),
-                control.text(),
-            )
+                control.setIcon(control.icon())
+            if overflow <= 0:
+                self._inspector_control_fit_state[control] = (
+                    context,
+                    own_style,
+                    control.styleSheet(),
+                    control.text(),
+                )
+            else:
+                self._inspector_control_fit_state.pop(control, None)
         inspector = scroll.widget()
         for spin in (self.rolling_spin, self.sigma_spin):
             edit = spin.lineEdit()

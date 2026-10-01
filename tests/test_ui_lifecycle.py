@@ -35,6 +35,24 @@ def _wait_until(predicate, timeout_ms=2500):
     return predicate()
 
 
+def _control_size_diagnostics(control):
+    metrics = control.fontMetrics()
+    text = getattr(control, "text", lambda: "")()
+    return {
+        "text": text,
+        "own_style": control.styleSheet(),
+        "font": control.font().toString(),
+        "resolved_font_px": QtGui.QFontInfo(control.font()).pixelSize(),
+        "metrics_dpi": metrics.fontDpi(),
+        "metrics_height": metrics.height(),
+        "line_widths": [metrics.horizontalAdvance(line) for line in text.splitlines()],
+        "minimum_hint": control.minimumSizeHint().toTuple(),
+        "preferred_hint": control.sizeHint().toTuple(),
+        "size": control.size().toTuple(),
+        "logical_dpi": (control.logicalDpiX(), control.logicalDpiY()),
+    }
+
+
 def test_reconnection_warning_is_nonmodal_and_keeps_existing_samples(window):
     window.channels["A"].session.append(Measurement(0, 10, "V"))
     window.channels["B"].session.append(Measurement(0, 20, "V"))
@@ -389,8 +407,7 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
         assert scroll.viewport().width() == 252
         assert scroll.widget().width() <= scroll.viewport().width(), {
             type(child).__name__ + ": " + getattr(child, "text", lambda: "")(): (
-                child.width(),
-                child.minimumSizeHint().width(),
+                _control_size_diagnostics(child)
             )
             for child in scroll.widget().findChildren(QtWidgets.QWidget)
             if child.minimumSizeHint().width() > scroll.viewport().width() - 28
@@ -465,7 +482,9 @@ def test_english_inspector_preserves_words_when_native_font_requires_fitting(win
     assert " ".join(control.text().split()) == canonical_text
     assert "Normalize" in control.text().splitlines()
     assert QtGui.QFontInfo(control.font()).pixelSize() < 48
-    assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+    assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28, (
+        _control_size_diagnostics(control)
+    )
     assert all(
         control.fontMetrics().horizontalAdvance(line) <= control.width() - 26
         for line in control.text().splitlines()
@@ -489,6 +508,53 @@ def test_english_inspector_preserves_words_when_native_font_requires_fitting(win
     assert control.styleSheet() == requested_style
     assert " ".join(control.text().split()) == canonical_text
     assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+
+
+def test_inspector_fitting_invalidates_stale_native_checkbox_size_hint(window):
+    class PreserveNativeSizeCache(QtCore.QObject):
+        def eventFilter(self, watched, event):
+            return event.type() in (
+                QtCore.QEvent.Type.FontChange,
+                QtCore.QEvent.Type.StyleChange,
+                QtCore.QEvent.Type.PaletteChange,
+            )
+
+    window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+    scroll = window.inspector_scroll
+    scroll.setMaximumWidth(260)
+    window.resize(1180, 720)
+    window.show()
+    QtTest.QTest.qWait(100)
+    control = window.allan_normalized
+    control.setText("Normalize\nAllan\nto\nppm")
+    control.setStyleSheet("font-size: 48px; font-family: 'Courier New';")
+    control.ensurePolished()
+    previous_hint = control.minimumSizeHint()
+    previous_width = control.fontMetrics().horizontalAdvance("Normalize")
+    assert previous_hint.width() > scroll.viewport().width() - 28
+    cache_filter = PreserveNativeSizeCache(control)
+    control.installEventFilter(cache_filter)
+    try:
+        # Reproduce the Windows failure: the requested font and actual glyph
+        # metrics change while the native checkbox keeps its previous size hint.
+        control.setStyleSheet("font-size: 24px; font-family: 'Courier New';")
+        control.ensurePolished()
+        assert control.fontMetrics().horizontalAdvance("Normalize") < previous_width
+        assert control.minimumSizeHint() == previous_hint
+        window._fit_inspector_controls()
+        QtWidgets.QApplication.processEvents()
+        assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28, (
+            _control_size_diagnostics(control)
+        )
+        assert " ".join(control.text().split()) == "Normalize Allan to ppm"
+        assert all(
+            control.fontMetrics().horizontalAdvance(line) <= control.width() - 26
+            for line in control.text().splitlines()
+        ), _control_size_diagnostics(control)
+        assert scroll.widget().width() <= scroll.viewport().width()
+        assert scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        control.removeEventFilter(cache_filter)
 
 
 def test_language_change_preserves_live_sources_and_stopped_temperature(window):
