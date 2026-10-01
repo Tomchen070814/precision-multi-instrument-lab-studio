@@ -141,7 +141,7 @@ def test_duplicate_real_resource_is_rejected(app):
     with pytest.raises(ValueError) as error:
         window._validate_distinct_resources({"A", "B"})
     assert "VISA" in str(error.value)
-    assert "不能连接同一个 VISA 地址" in str(error.value)
+    assert "Enabled channels cannot share a VISA resource" in str(error.value)
     window.close()
     window.deleteLater()
     QtWidgets.QApplication.processEvents()
@@ -163,7 +163,7 @@ def test_scan_replaces_stale_addresses_and_assigns_two_instruments(app, monkeypa
     assert window.panels["A"].resource_name == "GPIB0::22::INSTR"
     assert window.panels["B"].resource_name == "GPIB0::23::INSTR"
     assert (
-        "当前地址分配：A=GPIB0::22::INSTR，B=GPIB0::23::INSTR"
+        "Current assignments: A=GPIB0::22::INSTR, B=GPIB0::23::INSTR"
         in window.event_log.toPlainText()
     )
     window.close()
@@ -178,6 +178,12 @@ def test_every_analysis_page_identifies_selected_instrument_and_resource(app):
     window.panels["B"].driver_combo.setCurrentIndex(1)
     window.panels["A"].resource_combo.setCurrentText("GPIB0::21::INSTR")
     window.panels["B"].resource_combo.setCurrentText("GPIB1::22::INSTR")
+    for channel in ("A", "B"):
+        panel = window.panels[channel]
+        session = window.channels[channel].session
+        session.instrument_model = panel.instrument_model.display_name
+        session.resource = panel.resource_name
+        session.measurement_function = panel.current_function().command
     for index in range(8):
         window.channels["A"].session.append(
             Measurement(index * 0.1, 1.0 + index * 1e-6, "V")
@@ -194,8 +200,8 @@ def test_every_analysis_page_identifies_selected_instrument_and_resource(app):
     for banner in window.analysis_banners.values():
         assert banner["channel"].text() == "3458A A"
         assert banner["resource"].text() == "GPIB0::21::INSTR"
-        assert "8 样本" in banner["meta"].text()
-    assert window.statistics_summary_titles["A"].text() == "3458A A · 统计摘要"
+        assert "8 samples" in banner["meta"].text()
+    assert window.statistics_summary_titles["A"].text() == "3458A A · Statistics"
     assert not window.statistics_summary_cards["A"].isHidden()
     assert window.statistics_summary_cards["B"].isHidden()
     assert window.stability_note.text().startswith("3458A A ·")
@@ -208,8 +214,8 @@ def test_every_analysis_page_identifies_selected_instrument_and_resource(app):
     for banner in window.analysis_banners.values():
         assert banner["channel"].text() == "3458A B"
         assert banner["resource"].text() == "GPIB1::22::INSTR"
-        assert "8 样本" in banner["meta"].text()
-    assert window.statistics_summary_titles["B"].text() == "3458A B · 统计摘要"
+        assert "8 samples" in banner["meta"].text()
+    assert window.statistics_summary_titles["B"].text() == "3458A B · Statistics"
     assert window.statistics_summary_cards["A"].isHidden()
     assert not window.statistics_summary_cards["B"].isHidden()
     assert window.stability_note.text().startswith("3458A B ·")
@@ -225,6 +231,12 @@ def test_dual_analysis_displays_a_and_b_on_every_analysis_page(app):
     window.panels["B"].driver_combo.setCurrentIndex(1)
     window.panels["A"].resource_combo.setCurrentText("GPIB0::21::INSTR")
     window.panels["B"].resource_combo.setCurrentText("GPIB1::22::INSTR")
+    for channel in ("A", "B"):
+        panel = window.panels[channel]
+        session = window.channels[channel].session
+        session.instrument_model = panel.instrument_model.display_name
+        session.resource = panel.resource_name
+        session.measurement_function = panel.current_function().command
     for index in range(32):
         temperature = 25.0 + index * 0.01
         window.channels["A"].session.append(
@@ -252,11 +264,11 @@ def test_dual_analysis_displays_a_and_b_on_every_analysis_page(app):
     assert window.tabs.tabText(window.statistics_tab_index).endswith("· A+B")
     assert window.tabs.tabText(window.stability_tab_index).endswith("· A+B")
     for banner in window.analysis_banners.values():
-        assert banner["channel"].text() == "3458A A + B"
+        assert banner["channel"].text() == "3458A A + 3458A B"
         assert "A GPIB0::21::INSTR" in banner["resource"].text()
         assert "B GPIB1::22::INSTR" in banner["resource"].text()
-        assert "A 32 样本" in banner["meta"].text()
-        assert "B 32 样本" in banner["meta"].text()
+        assert "A 32 samples" in banner["meta"].text()
+        assert "B 32 samples" in banner["meta"].text()
     for channel in ("A", "B"):
         assert _curve_point_count(window.fft_curves[channel]) > 0
         assert _curve_point_count(window.asd_curves[channel]) > 0
@@ -265,8 +277,8 @@ def test_dual_analysis_displays_a_and_b_on_every_analysis_page(app):
         assert _curve_point_count(window.drift_points[channel]) == 32
         assert _curve_point_count(window.drift_fit_curves[channel]) == 32
         assert not window.statistics_summary_cards[channel].isHidden()
-    assert "3458A A · 线性漂移" in window.stability_note.text()
-    assert "3458A B · 线性漂移" in window.stability_note.text()
+    assert "3458A A · linear drift" in window.stability_note.text()
+    assert "3458A B · linear drift" in window.stability_note.text()
 
     window.close()
     window.deleteLater()
@@ -294,8 +306,8 @@ def test_mixed_units_use_independent_trend_axes_and_selected_analysis(app):
     assert _curve_point_count(window.drift_points["A"]) == 8
     assert _curve_point_count(window.fft_curves["B"]) == 0
     assert _curve_point_count(window.asd_curves["B"]) == 0
-    assert "混合物理量" in window.stability_note.text()
-    assert "混合单位" in window.analysis_banners["spectrum"]["meta"].text()
+    assert "Mixed physical units" in window.stability_note.text()
+    assert "mixed units" in window.analysis_banners["spectrum"]["meta"].text()
 
     window.close()
     window.deleteLater()
@@ -323,8 +335,11 @@ def test_fixed_count_precision_acquisition_stops_automatically(app):
         )
     )
     assert window.channels["A"].state == "已完成"
-    assert window.readouts["A"]["time"].text().startswith("完成 · 7 / 7 点 · ")
-    assert "固定点数采集完成：7 点，已自动停止" in window.event_log.toPlainText()
+    assert window.readouts["A"]["time"].text().startswith("Complete · 7 / 7 samples · ")
+    assert (
+        "fixed-count acquisition complete: 7 samples; stopped automatically."
+        in window.event_log.toPlainText()
+    )
     assert not window.channels["B"].running
 
     window.close()
@@ -349,8 +364,8 @@ def test_synchronized_channels_finish_their_own_fixed_counts(app):
     )
     assert window.channels["A"].state == "已完成"
     assert window.channels["B"].state == "已完成"
-    assert window.readouts["A"]["time"].text().startswith("完成 · 5 / 5 点 · ")
-    assert window.readouts["B"]["time"].text().startswith("完成 · 9 / 9 点 · ")
+    assert window.readouts["A"]["time"].text().startswith("Complete · 5 / 5 samples · ")
+    assert window.readouts["B"]["time"].text().startswith("Complete · 9 / 9 samples · ")
 
     window.close()
     window.deleteLater()
@@ -411,16 +426,16 @@ def test_any_pair_can_be_selected_for_synchronized_start(app):
     window.sync_channel_checks["B"].setChecked(False)
     window.sync_channel_checks["C"].setChecked(True)
     assert window.sync_channels == ("A", "C")
-    assert window.start_both_button.text() == "同步启动 A+C"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start A+C"
 
     window.sync_channel_checks["A"].setChecked(False)
     window.sync_channel_checks["B"].setChecked(True)
     assert window.sync_channels == ("B", "C")
-    assert window.start_both_button.text() == "同步启动 B+C"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start B+C"
 
     window.channel_c_enabled.setChecked(False)
     assert window.sync_channels == ("B",)
-    assert window.start_both_button.text() == "启动 B"
+    assert " ".join(window.start_both_button.text().split()) == "Start B"
     assert not window.sync_channel_checks["C"].isChecked()
 
     window.close()
@@ -449,7 +464,7 @@ def test_selected_a_and_c_start_without_touching_b(app):
     )
     assert len(window.channels["B"].session) == 0
     assert not window.channels["B"].running
-    assert "A+C 同步启动" in window.event_log.toPlainText()
+    assert "A+C synchronized start" in window.event_log.toPlainText()
 
     window.channel_c_enabled.setChecked(False)
     window.close()
@@ -462,12 +477,14 @@ def test_language_switch_updates_main_and_instrument_controls(app):
     english_index = window.language_combo.findData("en")
     window.language_combo.setCurrentIndex(english_index)
 
-    assert window.stop_all_button.text() == "Stop all"
-    assert window.import_button.text() == "Import to selected"
+    assert " ".join(window.stop_all_button.text().split()) == "Stop all"
+    assert " ".join(window.import_button.text().split()) == "Import to selected"
     assert window.panels["A"].resource_refresh.text() == "Scan"
     assert window.panels["A"].start_button.text() == "Start 3458A A"
-    assert window.start_both_button.text() == "Synchronized start A+B"
-    assert window.export_diagnostic_button.text() == "Export diagnostic report"
+    assert " ".join(window.start_both_button.text().split()) == "Synchronized start A+B"
+    assert (
+        " ".join(window.export_diagnostic_button.text().split()) == "Export diagnostics"
+    )
     assert "Multi-channel trend" in window.tabs.tabText(window.trend_tab_index)
 
     chinese_index = window.language_combo.findData("zh")

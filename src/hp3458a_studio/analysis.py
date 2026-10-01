@@ -70,6 +70,11 @@ def estimate_sample_period(elapsed_s: np.ndarray | list[float]) -> float:
     return float(np.median(differences)) if differences.size else 1.0
 
 
+def has_time_gaps(elapsed_s: np.ndarray) -> bool:
+    x = np.asarray(elapsed_s, dtype=float)
+    return bool(x.size > 3 and np.any(np.diff(x) > 1.5 * estimate_sample_period(x)))
+
+
 def spectrum(
     values: np.ndarray | list[float],
     sample_period_s: float,
@@ -121,6 +126,9 @@ def allan_deviation(
         mean = np.mean(y)
         if mean != 0:
             y = y / mean
+    # Adjacent cluster differences are invariant to a constant offset. Remove
+    # it before accumulating so the DC level cannot drown out small noise.
+    y = y - y[0]
     max_m = max(1, y.size // 3)
     clusters = np.unique(
         np.maximum(

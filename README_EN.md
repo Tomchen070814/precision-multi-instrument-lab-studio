@@ -10,9 +10,10 @@ function, unit, timeline, and crash-resistant autosave file. Every supported
 instrument also includes a digital-twin demo mode for use without physical
 hardware.
 
-The UI language can be switched instantly from the top-right corner. The selected
-language, window geometry, panel widths, and Channel C state are remembered
-automatically.
+The UI defaults to English on first launch. Use **LANGUAGE** in the top-right
+corner to switch between English and 中文. Your manual choice is saved and
+restored on the next launch; an existing Chinese preference is preserved.
+Window geometry, panel widths, and Channel C state are also remembered.
 
 > The 3458A uses its native HP-IB command set, and the 8508A uses its native
 > IEEE-488 command set. Neither is treated as a generic SCPI instrument. The
@@ -20,7 +21,17 @@ automatically.
 > queries and strictly verifies instrument identity, and the three protocol
 > families are isolated from one another.
 
-Current release: **v0.5.2**. This release builds on the 14-model architecture in
+Current release: **v0.5.3**. See [release notes](RELEASE_NOTES_v0.5.3.md) for
+individual instrument selection, plot zoom/clipping, and acquisition fixes.
+Restarting one instrument after a function change restores its new time range;
+slow captures show their first point and requested interval. Scrolling the
+settings panel cannot accidentally change acquisition parameters. The plotting
+dependency requires pyqtgraph 0.14 or later.
+Narrow side panels wrap their controls, and language changes preserve live source,
+temperature and acquisition status for each instrument.
+Embedded A/B/C curve legends are removed. Instrument tabs, channel selection,
+and multi-channel comparison remain available.
+The v0.5.2 release built on the 14-model architecture in
 v0.5.1 with connection self-tests, layered driver/GPIB diagnostics, mandatory
 data-source identification, real-time memory monitoring, and long-session
 performance improvements.
@@ -34,7 +45,7 @@ performance improvements.
   VISA, the GPIB controller, bus, address, and model identity.
 - Driver, GPIB, address, timeout, resource-busy, and model-mismatch failures are
   reported separately instead of appearing as a generic connection error.
-- Each channel has an independent **Connection Self-Test** button, and error
+- Each channel has an independent **Self-check** button, and error
   dialogs link directly to official driver download pages.
 - The model catalog includes Keysight, Fluke, Keithley, Rohde & Schwarz, Rigol,
   Siglent, GW Instek, Hioki, Yokogawa, and Picotest.
@@ -44,8 +55,8 @@ performance improvements.
   digits, Autozero, and sample interval.
 - Instruments can be started or stopped individually, or synchronized in any
   A+B, A+C, B+C, or A+B+C combination.
-- Switch between 中文 and English instantly without restarting or losing
-  acquisition settings.
+- English is the first-launch default. Switch between 中文 and English instantly
+  without restarting or losing acquisition settings.
 - Language, window size, panel widths, and Channel C state are saved
   automatically.
 - Precision mode supports continuous acquisition or a fixed sample count, such
@@ -74,6 +85,9 @@ performance improvements.
   analysis can show all enabled channels.
 - Channel colors are fixed for consistent identification: A cyan, B purple, and
   C green. Single-channel views are also available.
+- Charts omit embedded A/B/C legends. Select an instrument tab or analysis
+  channel for an individual view, or enable **Compare all channels** to
+  compare channels.
 - Multi-channel FFT/ASD uses each channel's own sample rate. Histograms use shared
   bins with transparent overlays.
 - A/B/C each display their own statistical summary, Allan curve, drift fit, and
@@ -86,13 +100,21 @@ performance improvements.
   channel's independent time axis.
 - Persistent rotating logs survive shutdowns and crashes. Each file is limited
   to 5 MB, with up to four generations retained.
-- In precision mode, every received sample is immediately appended to CSV and
-  committed with `flush + fsync`.
+- Acquisition, filesystem commits, and long-session FFT/Allan calculations run
+  on background threads. The GUI renders their results.
+- Precision samples enter a bounded save queue. Background batches use
+  `flush + fsync`, normally within about 200 ms; delayed storage extends the
+  window. Stop/close drains every accepted row before finalization.
+- A disconnected DMM retries transient transport failures up to five times with
+  cancellable backoff, preserving its original session and sample count while
+  other channels continue.
 - If VISA/GPIB disconnects, Windows crashes, or the process terminates
   unexpectedly, committed samples remain available in a directly readable
   recovery file.
 - Incomplete recovery files are detected at startup, and the autosave directory
   can be opened directly from the right-side panel.
+- A virtual three-SMU diode I-V demo includes Gaussian noise, current compliance,
+  individual channel plots and CSV export. It never controls a physical SMU.
 - One-click ZIP diagnostic report containing an HTML summary, JSON state, current
   events, and historical error logs.
 - Diagnostic reports exclude measurement samples to avoid unintentionally
@@ -254,8 +276,8 @@ pip install -e .
 python run.py
 ```
 
-To preview the interface without instruments, keep every channel in **Demo
-Mode**. No VISA driver is required.
+To preview the interface without instruments, set each channel's **Data source**
+to **Demo · digital twin**. No VISA driver is required.
 
 ## Install Once on Windows
 
@@ -311,7 +333,7 @@ rotating logs in the local application-data directory:
 Each log file is limited to 5 MB. Three backups are retained, for a maximum of
 four generations including the current file, so long sessions cannot grow disk
 usage without limit. After an issue—even after restarting the application—select
-**Export Diagnostic Report** in the right-side Events area. The generated ZIP
+**Export diagnostics** in the right-side Events area. The generated ZIP
 contains:
 
 ```text

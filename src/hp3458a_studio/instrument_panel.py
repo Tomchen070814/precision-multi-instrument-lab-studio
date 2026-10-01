@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .drivers import RANGES, AcquisitionConfig, MeasurementFunction
 from .i18n import function_name, tr
@@ -14,7 +14,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self,
         channel: str,
         default_resource: str,
-        language: str = "zh",
+        language: str = "en",
         parent=None,
     ):
         super().__init__(parent)
@@ -25,6 +25,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self._stoppable = True
         self._field_labels: list[tuple[QtWidgets.QLabel, str]] = []
         self._build_ui()
+        self._protect_wheel_edits()
         self._connect_signals()
         self._driver_changed()
         self._mode_changed()
@@ -37,7 +38,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
 
         self.model_combo = QtWidgets.QComboBox()
         for model in InstrumentModel:
-            self.model_combo.addItem(model.display_name, model)
+            self.model_combo.addItem(model.display_name, model.value)
         outer.addWidget(self._field("仪表型号", self.model_combo))
 
         self.driver_combo = QtWidgets.QComboBox()
@@ -45,18 +46,24 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self.driver_combo.addItem("", "visa")
         outer.addWidget(self._field("数据来源", self.driver_combo))
 
-        resource_row = QtWidgets.QHBoxLayout()
         self.resource_combo = QtWidgets.QComboBox()
         self.resource_combo.setEditable(True)
+        # The shared combo style reserves 46 px for padding and its arrow.
+        # Give the editable VISA address that space without reducing its font.
+        self.resource_combo.setStyleSheet(
+            "QComboBox { padding: 7px 1px; }QComboBox::drop-down { width: 18px; }"
+        )
         self.resource_combo.addItem(self.default_resource)
+        outer.addWidget(self.resource_combo)
+        resource_actions = QtWidgets.QVBoxLayout()
+        # Each action keeps a full row: their combined English native minimum
+        # can exceed the narrow sidebar even when either label fits by itself.
+        resource_actions.setSpacing(4)
         self.resource_refresh = QtWidgets.QPushButton()
-        self.resource_refresh.setFixedWidth(58)
         self.connection_check = QtWidgets.QPushButton()
-        self.connection_check.setFixedWidth(66)
-        resource_row.addWidget(self.resource_combo, 1)
-        resource_row.addWidget(self.resource_refresh)
-        resource_row.addWidget(self.connection_check)
-        outer.addLayout(resource_row)
+        resource_actions.addWidget(self.resource_refresh)
+        resource_actions.addWidget(self.connection_check)
+        outer.addLayout(resource_actions)
 
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem("", "precision")
@@ -134,6 +141,27 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         outer.addWidget(self.start_button)
         outer.addStretch()
 
+        # Long translated menu options must not widen a vertically scrolling
+        # panel. Hidden horizontal scrollbars can still pan it on focus changes.
+        for combo in self.findChildren(QtWidgets.QComboBox):
+            combo.setSizeAdjustPolicy(
+                QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(8)
+            combo.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+        for combo in (
+            self.model_combo,
+            self.function_combo,
+            self.range_combo,
+            self.precision_length_combo,
+            self.resource_combo,
+        ):
+            combo.currentTextChanged.connect(combo.setToolTip)
+            combo.setToolTip(combo.currentText())
+
     def _connect_signals(self) -> None:
         self.model_combo.currentIndexChanged.connect(self._model_changed)
         self.driver_combo.currentIndexChanged.connect(self._driver_changed)
@@ -143,6 +171,44 @@ class InstrumentControlPanel(QtWidgets.QWidget):
             self._precision_length_changed
         )
 
+    def _protect_wheel_edits(self) -> None:
+        for control in (
+            *self.findChildren(QtWidgets.QComboBox),
+            *self.findChildren(QtWidgets.QAbstractSpinBox),
+        ):
+            control.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            control.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QtCore.QEvent.Type.Wheel and isinstance(
+            watched, (QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)
+        ):
+            # Instrument settings require an explicit click, key, or edit.
+            # A wheel gesture over this scrollable panel must only scroll it.
+            event.ignore()
+            parent = watched.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QtWidgets.QAbstractScrollArea):
+                    viewport = parent.viewport()
+                    forwarded = QtGui.QWheelEvent(
+                        QtCore.QPointF(
+                            viewport.mapFromGlobal(event.globalPosition().toPoint())
+                        ),
+                        event.globalPosition(),
+                        event.pixelDelta(),
+                        event.angleDelta(),
+                        event.buttons(),
+                        event.modifiers(),
+                        event.phase(),
+                        event.inverted(),
+                    )
+                    QtWidgets.QApplication.sendEvent(viewport, forwarded)
+                    event.setAccepted(forwarded.isAccepted())
+                    break
+                parent = parent.parentWidget()
+            return True
+        return super().eventFilter(watched, event)
+
     def _field(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(container)
@@ -150,6 +216,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         layout.setSpacing(4)
         label = QtWidgets.QLabel(title)
         label.setObjectName("hint")
+        label.setWordWrap(True)
         self._field_labels.append((label, title))
         layout.addWidget(label)
         layout.addWidget(widget)
@@ -241,7 +308,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         )
         for function in functions:
             self.function_combo.addItem(
-                function_name(self.language, function), function
+                function_name(self.language, function), function.value
             )
         if current in functions:
             self.function_combo.setCurrentIndex(functions.index(current))
@@ -260,11 +327,10 @@ class InstrumentControlPanel(QtWidgets.QWidget):
 
     def current_function(self) -> MeasurementFunction:
         data = self.function_combo.currentData()
-        return (
-            data
-            if isinstance(data, MeasurementFunction)
-            else MeasurementFunction.DC_VOLTAGE
-        )
+        try:
+            return MeasurementFunction(data)
+        except (TypeError, ValueError):
+            return MeasurementFunction.DC_VOLTAGE
 
     def read_config(self) -> AcquisitionConfig:
         try:
@@ -312,11 +378,10 @@ class InstrumentControlPanel(QtWidgets.QWidget):
     @property
     def instrument_model(self) -> InstrumentModel:
         data = self.model_combo.currentData()
-        return (
-            data
-            if isinstance(data, InstrumentModel)
-            else InstrumentModel.KEYSIGHT_3458A
-        )
+        try:
+            return InstrumentModel(data)
+        except (TypeError, ValueError):
+            return InstrumentModel.KEYSIGHT_3458A
 
     @property
     def instrument_name(self) -> str:
@@ -410,6 +475,11 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         )
         self.precision_length_combo.setItemText(
             1, tr(self.language, "固定点数，完成后自动停止")
+        )
+        self.interval_spin.setToolTip(
+            "Edit with the keyboard or arrow buttons; the wheel scrolls the panel."
+            if self.language == "en"
+            else "用键盘或上下箭头修改；滚轮只滚动面板。"
         )
         for label, key in self._field_labels:
             label.setText(tr(self.language, key))

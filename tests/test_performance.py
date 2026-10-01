@@ -26,15 +26,34 @@ def test_short_display_payload_keeps_every_sample():
 def test_windowed_display_indices_restore_local_detail():
     timestamps = array("d", (float(value) for value in range(100_000)))
     indices = windowed_display_indices(timestamps, 40_000.0, 40_099.0, max_points=200)
-    assert np.array_equal(indices, np.arange(40_000, 40_100))
+    assert np.array_equal(indices, np.arange(39_999, 40_101))
 
 
 def test_windowed_display_indices_stay_bounded_for_wide_window():
     timestamps = array("d", (float(value) for value in range(100_000)))
     indices = windowed_display_indices(timestamps, 20_000.0, 79_999.0, max_points=500)
     assert indices.size <= 500
-    assert indices[0] == 20_000
-    assert indices[-1] == 79_999
+    assert indices[0] == 19_999
+    assert indices[-1] == 80_000
+
+
+def test_slow_sampling_keeps_segment_crossing_zoom_window():
+    timestamps = array("d", [0.0, 21.1, 42.2, 63.3])
+    indices = windowed_display_indices(timestamps, 46.0, 49.0)
+    assert np.array_equal(indices, [2, 3])
+    assert timestamps[indices[0]] < 46.0
+    assert timestamps[indices[-1]] > 49.0
+
+
+def test_zoom_window_outside_session_does_not_display_stale_points():
+    timestamps = array("d", [10.0, 20.0])
+    assert not windowed_display_indices(timestamps, 30.0, 40.0).size
+    assert not windowed_display_indices(timestamps, 0.0, 5.0).size
+
+
+def test_zoom_window_handles_single_point_and_reversed_bounds():
+    assert np.array_equal(windowed_display_indices([21.1], 20.0, 22.0), [0])
+    assert np.array_equal(windowed_display_indices([0.0, 21.1], 10.0, 5.0), [0, 1])
 
 
 def test_session_timestamps_use_compact_numeric_storage():

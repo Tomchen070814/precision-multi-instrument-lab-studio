@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 import traceback as traceback_module
+from collections.abc import Callable
 from pathlib import Path
 
 import pyqtgraph as pg
@@ -14,7 +16,9 @@ from .diagnostics import configure_logging
 from .main_window import MainWindow
 
 
-def _install_exception_hook() -> None:
+def _install_exception_hook(
+    on_unhandled_exception: Callable[[str], None] | None = None,
+) -> None:
     def handle_exception(exc_type, exc_value, traceback) -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, traceback)
@@ -23,6 +27,13 @@ def _install_exception_hook() -> None:
             "Unhandled application exception",
             exc_info=(exc_type, exc_value, traceback),
         )
+        if on_unhandled_exception is not None:
+            # Automated GUI validation must fail on Qt callback exceptions,
+            # even when a nested error-dialog event loop could finish capture.
+            on_unhandled_exception(
+                f"Unhandled Qt callback: {exc_type.__name__}: {exc_value}"
+            )
+            return
         application = QtWidgets.QApplication.instance()
         if application is not None:
             QtWidgets.QMessageBox.critical(
@@ -89,7 +100,13 @@ def _claim_single_instance(
 
 
 def main() -> int:
+    smoke_path = None
+    smoke_errors: list[str] = []
     try:
+        if "--smoke-test" in sys.argv:
+            smoke_index = sys.argv.index("--smoke-test")
+            smoke_path = Path(sys.argv[smoke_index + 1]).resolve()
+            del sys.argv[smoke_index : smoke_index + 2]
         os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
         pg.setConfigOptions(antialias=False, useOpenGL=False)
         app = QtWidgets.QApplication(sys.argv)
@@ -98,19 +115,36 @@ def main() -> int:
         app.setApplicationVersion(__version__)
         app.setOrganizationName("Louis Lab")
         app.setStyle("Fusion")
-        data_directory = Path(
-            QtCore.QStandardPaths.writableLocation(
-                QtCore.QStandardPaths.StandardLocation.AppLocalDataLocation
+        smoke_directory = None
+        if smoke_path:
+            smoke_directory = QtCore.QTemporaryDir()
+            if not smoke_directory.isValid():
+                raise OSError("Unable to create isolated smoke-test state directory")
+            isolated_root = Path(smoke_directory.path())
+            isolated_settings = QtCore.QSettings(
+                str(isolated_root / "settings.ini"), QtCore.QSettings.Format.IniFormat
             )
-        )
+            MainWindow._create_settings = staticmethod(lambda: isolated_settings)
+            os.environ["LOCALAPPDATA"] = str(isolated_root)
+            data_directory = isolated_root / "logs"
+        else:
+            data_directory = Path(
+                QtCore.QStandardPaths.writableLocation(
+                    QtCore.QStandardPaths.StandardLocation.AppLocalDataLocation
+                )
+            )
         configure_logging(data_directory)
-        _install_exception_hook()
+        _install_exception_hook(
+            on_unhandled_exception=smoke_errors.append if smoke_path else None
+        )
         logging.getLogger("hp3458a_studio").info(
             "Application start | version=%s | platform=%s",
             __version__,
             sys.platform,
         )
-        instance_server, is_primary = _claim_single_instance(app)
+        instance_server, is_primary = (
+            (None, True) if smoke_path else _claim_single_instance(app)
+        )
         if not is_primary:
             logging.getLogger("hp3458a_studio").info(
                 "Existing application instance activated"
@@ -138,6 +172,10 @@ def main() -> int:
         if instance_server is not None:
             instance_server.newConnection.connect(activate_window)
         window.show()
+        if smoke_path:
+            from .build_smoke import start_smoke_test
+
+            start_smoke_test(app, window, smoke_path, unhandled_errors=smoke_errors)
         screenshot_path = os.environ.get("HP3458A_SCREENSHOT")
         if screenshot_path:
 
@@ -150,12 +188,37 @@ def main() -> int:
         logging.getLogger("hp3458a_studio").info(
             "Application exit | code=%s", exit_code
         )
+        if smoke_directory is not None:
+            logging.shutdown()
+            smoke_directory.remove()
         return exit_code
     except Exception as exc:
         details = "".join(traceback_module.format_exception(exc))
         logging.getLogger("hp3458a_studio").critical(
             "Fatal application startup error", exc_info=True
         )
+        if smoke_path is not None:
+            try:
+                smoke_path.parent.mkdir(parents=True, exist_ok=True)
+                smoke_path.write_text(
+                    json.dumps(
+                        {
+                            "version": __version__,
+                            "result": "failed",
+                            "failure_reasons": [
+                                f"Startup failed: {type(exc).__name__}: {exc}"
+                            ],
+                            "shutdown_complete": False,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                logging.getLogger("hp3458a_studio").exception(
+                    "Smoke failure report unavailable"
+                )
+            return 1
         _show_fatal_startup_error(
             "The application could not start. The error was saved to "
             "application.log.\n\n"

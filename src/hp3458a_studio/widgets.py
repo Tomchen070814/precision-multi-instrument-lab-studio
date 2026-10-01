@@ -4,10 +4,80 @@ from datetime import datetime
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .styles import COLORS
 from .trend_logic import assign_unit_axes
+
+
+class _TrendDataItem(pg.PlotDataItem):
+    def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        if changed is None or changed[1]:
+            # Pyqtgraph's Y-limit hysteresis can otherwise reuse an unclipped
+            # dataset with stale clipping bounds after auto-fit then deep zoom.
+            self._datasetDisplay = None
+        super().viewRangeChanged(vb, ranges, changed)
+
+    def dataBounds(self, ax, frac=1.0, orthoRange=None):
+        # Clipping/downsampling changes the display dataset. Auto-ranging must
+        # use the original values, otherwise X zoom unexpectedly changes Y and
+        # large off-screen values expand the Y scale over several paint cycles.
+        x, y = self.getOriginalDataset()
+        if x is None or y is None:
+            return None, None
+        values, other = (x, y) if ax == 0 else (y, x)
+        mask = np.isfinite(values)
+        if orthoRange is not None:
+            mask &= (other >= orthoRange[0]) & (other <= orthoRange[1])
+        finite = values[mask]
+        if not finite.size:
+            return None, None
+        if frac < 1.0:
+            lower, upper = np.percentile(finite, [50 * (1 - frac), 50 * (1 + frac)])
+        else:
+            lower, upper = np.min(finite), np.max(finite)
+        return float(lower), float(upper)
+
+
+class _TrendViewBox(pg.ViewBox):
+    rectangle_selected = QtCore.Signal(float, float)
+
+    def shape(self) -> QtGui.QPainterPath:
+        # ViewBox's default bounding shape includes half a border pixel.
+        # Clip curves and annotations to the actual data rectangle instead.
+        path = QtGui.QPainterPath()
+        path.addRect(self.rect())
+        return path
+
+    def showAxRect(self, ax, **kwargs) -> None:
+        previous_min, previous_max = self.viewRange()[1]
+        selected = ax.normalized()
+        span = previous_max - previous_min
+        super().showAxRect(selected, **kwargs)
+        if span > 0:
+            self.rectangle_selected.emit(
+                (selected.top() - previous_min) / span,
+                (selected.bottom() - previous_min) / span,
+            )
+
+
+class _UnitViewBox(_TrendViewBox):
+    """Receive Y-axis gestures without intercepting the shared plot surface."""
+
+    def wheelEvent(self, event, axis=None) -> None:
+        if axis != self.YAxis:
+            event.ignore()
+            return
+        super().wheelEvent(event, axis=axis)
+
+    def mouseDragEvent(self, event, axis=None) -> None:
+        if axis != self.YAxis:
+            event.ignore()
+            return
+        super().mouseDragEvent(event, axis=axis)
+
+    def mouseClickEvent(self, event) -> None:
+        event.ignore()
 
 
 class Card(QtWidgets.QFrame):
@@ -52,6 +122,7 @@ class InteractivePlot(pg.PlotWidget):
         super().__init__(
             parent=parent,
             axisItems={"bottom": date_axis},
+            viewBox=_TrendViewBox(),
         )
         self.language = "zh"
         self.setBackground(COLORS["card"])
@@ -64,7 +135,11 @@ class InteractivePlot(pg.PlotWidget):
 
         plot_item = self.getPlotItem()
         self._manual_x_range = False
-        self._viewboxes = [plot_item.vb, pg.ViewBox(), pg.ViewBox()]
+        self._viewboxes = [plot_item.vb, _UnitViewBox(), _UnitViewBox()]
+        for view in self._viewboxes:
+            # One shared time range is fitted to all visible channels below;
+            # individual Y views must not replace it with their own X bounds.
+            view.enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
         self._axes = [
             plot_item.getAxis("left"),
             plot_item.getAxis("right"),
@@ -78,10 +153,11 @@ class InteractivePlot(pg.PlotWidget):
         self._axes[2].linkToView(self._viewboxes[2])
         for view in self._viewboxes[1:]:
             view.setXLink(self._viewboxes[0])
-            view.setMouseEnabled(x=False, y=False)
+            view.setMouseEnabled(x=False, y=True)
         self._viewboxes[0].sigResized.connect(self._update_view_geometry)
         self._viewboxes[0].sigXRangeChanged.connect(self._x_range_changed)
         self._viewboxes[0].sigRangeChangedManually.connect(self._range_changed_manually)
+        self._viewboxes[0].rectangle_selected.connect(self._rectangle_selected)
         self._update_view_geometry()
 
         for axis in (*self._axes, plot_item.getAxis("bottom")):
@@ -91,21 +167,26 @@ class InteractivePlot(pg.PlotWidget):
         self.legend = plot_item.addLegend(offset=(10, 10))
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._legend_labels: dict[str, str] = {}
+        self._legend_hidden: set[str] = set()
         self._channel_data: dict[str, tuple[np.ndarray, np.ndarray, str, str, str]] = {}
         self._channel_slots: dict[str, int] = {}
         self._unit_slots: dict[str, int] = {}
+        self._routing_signature: tuple[tuple[str, str, int], ...] = ()
         for channel, color in zip(
             self.CHANNELS,
             (COLORS["cyan"], COLORS["purple"], COLORS["green"]),
         ):
-            curve = pg.PlotDataItem(
+            curve = _TrendDataItem(
                 pen=pg.mkPen(color, width=1.6),
                 name=channel,
                 autoDownsample=True,
+                clipToView=True,
+                downsampleMethod="peak",
+                dynamicRangeLimit=1e3,
             )
             self._viewboxes[0].addItem(curve)
-            self.legend.addItem(curve, channel)
             self._curves[channel] = curve
+            self._add_legend_item(channel, channel)
             self._legend_labels[channel] = channel
 
         # Compatibility aliases retained for earlier UI automation.
@@ -113,14 +194,18 @@ class InteractivePlot(pg.PlotWidget):
         self.secondary_curve = self._curves["B"]
         self.tertiary_curve = self._curves["C"]
 
-        self.smooth_curve = pg.PlotDataItem(
+        self.smooth_curve = _TrendDataItem(
             pen=pg.mkPen(COLORS["yellow"], width=1.3),
             name="Rolling average",
             autoDownsample=True,
+            clipToView=True,
+            downsampleMethod="peak",
+            dynamicRangeLimit=1e3,
         )
         self._viewboxes[0].addItem(self.smooth_curve)
         self.smooth_curve.setVisible(False)
         self._smooth_channel = "A"
+        self._smooth_enabled = False
 
         self.v_line = pg.InfiniteLine(
             angle=90,
@@ -169,7 +254,7 @@ class InteractivePlot(pg.PlotWidget):
         return tuple(self._unit_slots)
 
     def _update_view_geometry(self) -> None:
-        geometry = self._viewboxes[0].sceneBoundingRect()
+        geometry = self._viewboxes[0].mapRectToScene(self._viewboxes[0].rect())
         for view in self._viewboxes[1:]:
             view.setGeometry(geometry)
             view.linkedViewChanged(
@@ -178,6 +263,14 @@ class InteractivePlot(pg.PlotWidget):
             )
 
     def _assign_axes(self) -> None:
+        previous_unit_slots = dict(self._unit_slots)
+        previous_ranges = {
+            unit: (
+                self._viewboxes[slot].viewRange()[1][:],
+                self._viewboxes[slot].autoRangeEnabled()[1],
+            )
+            for unit, slot in previous_unit_slots.items()
+        }
         visible_units: list[str] = []
         for channel in self.CHANNELS:
             data = self._channel_data.get(channel)
@@ -189,12 +282,29 @@ class InteractivePlot(pg.PlotWidget):
         channel_units = {
             channel: self._channel_data[channel][2]
             for channel in self.CHANNELS
-            if (channel in self._channel_data and self._channel_data[channel][1].size)
+            if (
+                channel in self._channel_data
+                and self._channel_data[channel][1].size
+                and channel not in self._legend_hidden
+            )
         }
         channel_slots, self._unit_slots = assign_unit_axes(channel_units)
+        routing_signature = tuple(
+            (channel, channel_units[channel], channel_slots[channel])
+            for channel in self.CHANNELS
+            if channel in channel_units
+        )
+        if routing_signature != self._routing_signature:
+            self.clear_markers()
+            self.v_line.setVisible(False)
+            self.h_line.setVisible(False)
+            self.hover_label.setVisible(False)
+            self._routing_signature = routing_signature
         visible_units = list(self._unit_slots)
         for index, axis in enumerate(self._axes):
             axis.setVisible(index < len(visible_units))
+            if index > 0:
+                self._viewboxes[index].setVisible(index < len(visible_units))
             if index >= len(visible_units):
                 continue
             unit = visible_units[index]
@@ -205,6 +315,7 @@ class InteractivePlot(pg.PlotWidget):
                     channel in self._channel_data
                     and self._channel_data[channel][2] == unit
                     and self._channel_data[channel][1].size
+                    and channel not in self._legend_hidden
                 )
             ]
             color = self._channel_data[channels[0]][3]
@@ -228,19 +339,94 @@ class InteractivePlot(pg.PlotWidget):
                 None,
             )
             if old_slot is not None and old_slot != slot:
+                # Qt emits parent-change callbacks between removal and
+                # insertion, when the curve temporarily has no ViewBox.
+                curve.setClipToView(False)
                 self._viewboxes[old_slot].removeItem(curve)
             if curve not in self._viewboxes[slot].addedItems:
                 self._viewboxes[slot].addItem(curve)
+                curve.setClipToView(True)
             self._channel_slots[channel] = slot
         self._move_smooth_curve(self._smooth_channel)
+        for unit, slot in self._unit_slots.items():
+            if previous_unit_slots.get(unit) == slot:
+                continue
+            view = self._viewboxes[slot]
+            previous = previous_ranges.get(unit)
+            if previous is None:
+                view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            else:
+                (y_min, y_max), automatic = previous
+                view.setYRange(y_min, y_max, padding=0)
+                view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=automatic)
         self._update_view_geometry()
+        self._fit_shared_x()
+
+    def _add_legend_item(self, channel: str, label: str) -> None:
+        curve = self._curves[channel]
+        self.legend.addItem(curve, label)
+        for sample, _label in self.legend.items:
+            if sample.item is curve:
+                sample.sigClicked.connect(
+                    lambda item, key=channel: self._legend_visibility_changed(key, item)
+                )
+                break
+
+    def _legend_visibility_changed(self, channel: str, curve: pg.PlotDataItem) -> None:
+        data = self._channel_data.get(channel)
+        if data is None or not data[1].size:
+            curve.setVisible(False)
+            return
+        if curve.isVisible():
+            self._legend_hidden.discard(channel)
+        else:
+            self._legend_hidden.add(channel)
+        self._assign_axes()
+
+    def restore_channel_visibility(self, channel: str) -> None:
+        """Show a channel explicitly selected or started by the user."""
+        curve = self._curves[channel]
+        self._legend_hidden.discard(channel)
+        data = self._channel_data.get(channel)
+        curve.setVisible(data is not None and bool(data[1].size))
+        self._assign_axes()
+
+    def _fit_shared_x(self) -> None:
+        if self._manual_x_range:
+            return
+        bounds = []
+        for channel, (x, y, _unit, _color, _label) in self._channel_data.items():
+            if not y.size or channel in self._legend_hidden:
+                continue
+            finite_x = x[np.isfinite(x)]
+            if finite_x.size:
+                bounds.append((float(np.min(finite_x)), float(np.max(finite_x))))
+        if not bounds:
+            return
+        lower = min(bound[0] for bound in bounds)
+        upper = max(bound[1] for bound in bounds)
+        if lower == upper:
+            lower -= 0.5
+            upper += 0.5
+        self._viewboxes[0].setXRange(lower, upper, padding=0.02)
 
     def _move_smooth_curve(self, channel: str) -> None:
+        data = self._channel_data.get(channel)
+        self.smooth_curve.setVisible(
+            self._smooth_enabled
+            and data is not None
+            and bool(data[1].size)
+            and channel not in self._legend_hidden
+        )
         slot = self._channel_slots.get(channel, 0)
+        if self.smooth_curve in self._viewboxes[slot].addedItems:
+            return
+        self.smooth_curve.setClipToView(False)
         for view in self._viewboxes:
             if self.smooth_curve in view.addedItems:
                 view.removeItem(self.smooth_curve)
         self._viewboxes[slot].addItem(self.smooth_curve)
+        self.smooth_curve.setClipToView(True)
 
     def set_labels(
         self,
@@ -283,12 +469,19 @@ class InteractivePlot(pg.PlotWidget):
         )
         curve = self._curves[channel]
         curve.setPen(pg.mkPen(color, width=1.6))
-        curve.setData(x_array, y_array)
-        curve.setVisible(bool(y_array.size))
+        curve.setData(
+            x_array,
+            y_array,
+            symbol="o" if y_array.size == 1 else None,
+            symbolSize=7,
+            symbolPen=None,
+            symbolBrush=pg.mkBrush(color),
+        )
+        curve.setVisible(bool(y_array.size) and channel not in self._legend_hidden)
         old_label = self._legend_labels.get(channel, channel)
         if old_label != label:
             self.legend.removeItem(old_label)
-            self.legend.addItem(curve, label)
+            self._add_legend_item(channel, label)
             self._legend_labels[channel] = label
         if refresh_axes:
             self._assign_axes()
@@ -305,16 +498,18 @@ class InteractivePlot(pg.PlotWidget):
     ) -> None:
         self._smooth_channel = channel
         if y is None:
+            self._smooth_enabled = False
             self.smooth_curve.setVisible(False)
             return
         x_array = np.asarray(x, dtype=float)
         y_array = np.asarray(y, dtype=float)
         if x_array.size != y_array.size or not y_array.size:
+            self._smooth_enabled = False
             self.smooth_curve.setVisible(False)
             return
+        self._smooth_enabled = True
         self._move_smooth_curve(channel)
         self.smooth_curve.setData(x_array, y_array)
-        self.smooth_curve.setVisible(True)
 
     # Legacy single/secondary/tertiary methods used by older integrations.
     def set_data(
@@ -376,13 +571,14 @@ class InteractivePlot(pg.PlotWidget):
     def reset_view(self) -> None:
         self._manual_x_range = False
         for view in self._viewboxes:
-            view.enableAutoRange(x=True, y=True)
-            view.autoRange()
+            view.enableAutoRange(x=False, y=True)
+            view.updateAutoRange()
+        self._fit_shared_x()
 
     def zoom_x(self, factor: float) -> None:
         """Scale only the shared wall-clock axis around its current center."""
-        if factor <= 0:
-            raise ValueError("Zoom factor must be positive")
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("Zoom factor must be finite and positive")
         view = self._viewboxes[0]
         self._manual_x_range = True
         view.enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
@@ -390,8 +586,8 @@ class InteractivePlot(pg.PlotWidget):
 
     def zoom_y(self, factor: float, unit: str = "") -> None:
         """Scale all Y axes or one physical-unit axis independently."""
-        if factor <= 0:
-            raise ValueError("Zoom factor must be positive")
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("Zoom factor must be finite and positive")
         if unit:
             slots = (self._unit_slots[unit],) if unit in self._unit_slots else ()
         else:
@@ -401,7 +597,9 @@ class InteractivePlot(pg.PlotWidget):
             view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
             view.scaleBy(y=float(factor))
 
-    def _range_changed_manually(self, *_args) -> None:
+    def _range_changed_manually(self, changed) -> None:
+        if not changed[0]:
+            return
         self._manual_x_range = True
         self._emit_manual_x_window()
 
@@ -413,25 +611,17 @@ class InteractivePlot(pg.PlotWidget):
 
     def _x_range_changed(self, *_args) -> None:
         self._emit_manual_x_window()
-        if not self._box_zoom_enabled:
-            return
-        x_min, x_max = self._viewboxes[0].viewRange()[0]
-        for slot, view in enumerate(self._viewboxes):
-            values: list[np.ndarray] = []
-            for channel, channel_slot in self._channel_slots.items():
-                if channel_slot != slot or channel not in self._channel_data:
-                    continue
-                x, y, _unit, _color, _label = self._channel_data[channel]
-                mask = np.isfinite(x) & np.isfinite(y) & (x >= x_min) & (x <= x_max)
-                if np.any(mask):
-                    values.append(y[mask])
-            if not values:
-                continue
-            combined = np.concatenate(values)
-            minimum = float(np.min(combined))
-            maximum = float(np.max(combined))
-            padding = max((maximum - minimum) * 0.08, abs(maximum) * 1e-12, 1e-15)
-            view.setYRange(minimum - padding, maximum + padding, padding=0)
+
+    def _rectangle_selected(self, lower_fraction: float, upper_fraction: float) -> None:
+        for slot in range(1, len(self._unit_slots)):
+            view = self._viewboxes[slot]
+            y_min, y_max = view.viewRange()[1]
+            span = y_max - y_min
+            view.setYRange(
+                y_min + lower_fraction * span,
+                y_min + upper_fraction * span,
+                padding=0,
+            )
 
     def clear_markers(self) -> None:
         for view, point, label in self._markers:
@@ -463,6 +653,12 @@ class InteractivePlot(pg.PlotWidget):
             point = view.mapViewToScene(
                 QtCore.QPointF(float(x[index]), float(y[index]))
             )
+            if (
+                not self._viewboxes[0]
+                .mapRectToScene(self._viewboxes[0].rect())
+                .contains(point)
+            ):
+                continue
             distance = (point.x() - scene_position.x()) ** 2 + (
                 point.y() - scene_position.y()
             ) ** 2
@@ -484,13 +680,17 @@ class InteractivePlot(pg.PlotWidget):
 
     def _mouse_moved(self, event) -> None:
         position = event[0]
-        if not self.sceneBoundingRect().contains(position):
+        nearest = None
+        if (
+            self._viewboxes[0]
+            .mapRectToScene(self._viewboxes[0].rect())
+            .contains(position)
+        ):
+            nearest = self._nearest(position)
+        if nearest is None:
             self.v_line.setVisible(False)
             self.h_line.setVisible(False)
             self.hover_label.setVisible(False)
-            return
-        nearest = self._nearest(position)
-        if nearest is None:
             return
         channel, x_value, y_value = nearest
         slot = self._channel_slots.get(channel, 0)
@@ -514,7 +714,11 @@ class InteractivePlot(pg.PlotWidget):
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
             return
         position = event.scenePos()
-        if not self.sceneBoundingRect().contains(position):
+        if (
+            not self._viewboxes[0]
+            .mapRectToScene(self._viewboxes[0].rect())
+            .contains(position)
+        ):
             return
         nearest = self._nearest(position)
         if nearest is None:
@@ -541,8 +745,8 @@ class InteractivePlot(pg.PlotWidget):
             anchor=(0, 1),
         )
         label.setPos(x_value, y_value)
-        view.addItem(point)
-        view.addItem(label)
+        view.addItem(point, ignoreBounds=True)
+        view.addItem(label, ignoreBounds=True)
         self._markers.append((view, point, label))
         if len(self._markers) > 36:
             old_view, old_point, old_label = self._markers.pop(0)

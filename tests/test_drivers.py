@@ -2,19 +2,28 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 import hp3458a_studio.drivers as driver_module
+from hp3458a_studio.connection_diagnostics import (
+    ConnectionIssueCode,
+    inspect_visa_environment,
+)
 from hp3458a_studio.drivers import (
     AcquisitionConfig,
+    Fluke8508ADriver,
     InstrumentError,
     Keysight3458ADriver,
     MeasurementFunction,
+    ScpiDmmDriver,
     SimulatorDriver,
     choose_gpib_assignments,
+    discover_visa_resources,
     gpib_instrument_resources,
     is_gpib_instrument_resource,
     parse_ascii_values,
 )
+from hp3458a_studio.models import InstrumentModel
 
 
 def test_parse_3458a_ascii_payload():
@@ -127,6 +136,23 @@ def test_simulator_burst():
     assert x.shape == (1000,)
     assert y.shape == (1000,)
     assert np.isclose(x[1] - x[0], 0.001)
+
+
+def test_simulator_burst_uses_explicit_function_without_reconfiguring_precision():
+    driver = SimulatorDriver(AcquisitionConfig(function=MeasurementFunction.DC_CURRENT))
+    driver.connect()
+    try:
+        _, y = driver.acquire_burst(
+            count=1000,
+            interval_s=0.001,
+            aperture_s=0.0001,
+            function=MeasurementFunction.DIGITIZE_DC,
+            measurement_range="10",
+        )
+        assert np.isclose(np.mean(y), 1.0, atol=0.001)
+        assert driver.config.function is MeasurementFunction.DC_CURRENT
+    finally:
+        driver.disconnect()
 
 
 class _FakeVisaInstrument:
@@ -308,3 +334,140 @@ def test_two_connections_on_one_gpib_bus_are_serialized(monkeypatch):
         driver.disconnect()
 
     assert state["maximum"] == 1
+
+
+class _MixedVisaInstrument(_FakeVisaInstrument):
+    def __init__(self, idn):
+        super().__init__()
+        self.idn = idn
+
+    def write(self, command):
+        if self.closed:
+            raise InstrumentError("VISA session closed")
+        super().write(command)
+
+    def read(self):
+        if self.closed:
+            raise InstrumentError("VISA session closed")
+        return {
+            "*IDN?": self.idn,
+            "SYST:LFREQ?": "50",
+            "READ?": "10.000001",
+            "X?": "5.000001",
+        }.get(self.last_command) or super().read()
+
+
+class _SharedVisaManager:
+    """Model PyVISA: one cached manager closes all its resource sessions."""
+
+    def __init__(self):
+        self.instruments = {
+            "GPIB0::22::INSTR": _MixedVisaInstrument("HEWLETT-PACKARD,3458A"),
+            "GPIB0::23::INSTR": _MixedVisaInstrument("KEYSIGHT,34470A,SN,1.0"),
+            "GPIB0::24::INSTR": _MixedVisaInstrument("FLUKE,8508A,SN,1.0"),
+        }
+        self.close_calls = 0
+        self.fail_discovery = False
+
+    def open_resource(self, resource):
+        if resource not in self.instruments:
+            raise InstrumentError("No listener")
+        return self.instruments[resource]
+
+    def list_resources(self, query="?*::INSTR"):
+        if self.fail_discovery:
+            raise RuntimeError("VISA enumeration failed")
+        if query == "?*":
+            return ("GPIB0::INTFC", *self.instruments)
+        return tuple(self.instruments)
+
+    def close(self):
+        self.close_calls += 1
+        for instrument in self.instruments.values():
+            instrument.close()
+
+
+def test_three_mixed_drivers_survive_peer_stop_scan_and_connection_check(monkeypatch):
+    manager = _SharedVisaManager()
+    monkeypatch.setattr(
+        driver_module.pyvisa, "ResourceManager", lambda _backend: manager
+    )
+    drivers = [
+        Keysight3458ADriver("GPIB0::22::INSTR"),
+        ScpiDmmDriver(
+            "GPIB0::23::INSTR", InstrumentModel.KEYSIGHT_34470A, visa_backend="@alias"
+        ),
+        Fluke8508ADriver("GPIB0::24::INSTR"),
+    ]
+    try:
+        for driver in drivers:
+            driver.connect()
+        drivers[0].disconnect()
+        assert manager.close_calls == 0
+        assert discover_visa_resources() == list(manager.instruments)
+        diagnostic = inspect_visa_environment(
+            "GPIB0::24::INSTR", InstrumentModel.FLUKE_8508A
+        )
+        assert diagnostic.ok
+        assert manager.close_calls == 0
+        assert np.isclose(drivers[1].read_single().value, 10.000001)
+        assert np.isclose(drivers[2].read_single().value, 5.000001)
+        drivers[1].disconnect()
+        assert manager.close_calls == 0
+        assert np.isclose(drivers[2].read_single().value, 5.000001)
+    finally:
+        for driver in drivers:
+            driver.disconnect()
+    assert manager.close_calls == 1
+
+
+def test_failed_connection_releases_lease_without_closing_running_peer(monkeypatch):
+    manager = _SharedVisaManager()
+    monkeypatch.setattr(
+        driver_module.pyvisa, "ResourceManager", lambda _backend: manager
+    )
+    running = Keysight3458ADriver("GPIB0::22::INSTR")
+    failing = Fluke8508ADriver("GPIB0::25::INSTR")
+    running.connect()
+    try:
+        with pytest.raises(InstrumentError):
+            failing.connect()
+        assert manager.close_calls == 0
+        assert np.isclose(running.read_single().value, 10.0000001)
+    finally:
+        failing.disconnect()
+        running.disconnect()
+    assert manager.close_calls == 1
+
+
+def test_failed_scan_and_injected_preflight_keep_running_session_open(monkeypatch):
+    manager = _SharedVisaManager()
+    monkeypatch.setattr(
+        driver_module.pyvisa, "ResourceManager", lambda _backend: manager
+    )
+    running = Keysight3458ADriver("GPIB0::22::INSTR")
+    running.connect()
+    try:
+        manager.fail_discovery = True
+        assert discover_visa_resources() == []
+        diagnostic = inspect_visa_environment(
+            "GPIB0::22::INSTR",
+            InstrumentModel.KEYSIGHT_3458A,
+            manager_factory=lambda: manager,
+        )
+        assert diagnostic.code is ConnectionIssueCode.VISA_DISCOVERY_FAILED
+        assert manager.close_calls == 0
+        assert np.isclose(running.read_single().value, 10.0000001)
+    finally:
+        running.disconnect()
+    assert manager.close_calls == 1
+
+
+def test_failed_discovery_without_drivers_still_closes_manager(monkeypatch):
+    manager = _SharedVisaManager()
+    manager.fail_discovery = True
+    monkeypatch.setattr(
+        driver_module.pyvisa, "ResourceManager", lambda _backend: manager
+    )
+    assert discover_visa_resources() == []
+    assert manager.close_calls == 1
