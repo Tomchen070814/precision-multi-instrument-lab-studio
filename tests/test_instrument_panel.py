@@ -190,6 +190,28 @@ def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
         assert control.mapTo(scroll.viewport(), QtCore.QPoint()).x() >= 0
         assert control.width() <= scroll.viewport().width()
     assert panel.interval_spin.value() == 21.1
+    assert panel.resource_combo.width() > panel.connection_check.width()
+    for button in (panel.resource_refresh, panel.connection_check):
+        bounds = QtCore.QRect(
+            button.mapTo(scroll.viewport(), QtCore.QPoint()), button.size()
+        )
+        scroll.ensureWidgetVisible(button)
+        app.processEvents()
+        bounds.moveTopLeft(button.mapTo(scroll.viewport(), QtCore.QPoint()))
+        assert scroll.viewport().rect().contains(bounds)
+        assert button.width() >= button.minimumSizeHint().width()
+        # APP_STYLE reserves 12 px on both sides plus its 1 px border.
+        assert (
+            button.fontMetrics().horizontalAdvance(button.text()) <= button.width() - 26
+        )
+    scroll.ensureWidgetVisible(panel.resource_combo)
+    app.processEvents()
+    assert (
+        panel.resource_combo.lineEdit()
+        .fontMetrics()
+        .horizontalAdvance(panel.resource_name)
+        <= panel.resource_combo.lineEdit().contentsRect().width()
+    )
     assert panel.model_combo.toolTip() == panel.model_combo.currentText()
     assert (
         panel.precision_length_combo.toolTip()

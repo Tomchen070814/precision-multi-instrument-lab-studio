@@ -46,20 +46,18 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self.driver_combo.addItem("", "visa")
         outer.addWidget(self._field("数据来源", self.driver_combo))
 
-        resource_row = QtWidgets.QHBoxLayout()
-        # Keep this three-control row inside the narrow sidebar even when
-        # Windows' real scrollbar and Segoe UI metrics consume more width.
-        resource_row.setSpacing(4)
         self.resource_combo = QtWidgets.QComboBox()
         self.resource_combo.setEditable(True)
         self.resource_combo.addItem(self.default_resource)
+        outer.addWidget(self.resource_combo)
+        resource_row = QtWidgets.QHBoxLayout()
+        # Give addresses their full row and let native button text determine
+        # its minimum width, including Windows fonts and translated labels.
+        resource_row.setSpacing(4)
         self.resource_refresh = QtWidgets.QPushButton()
-        self.resource_refresh.setFixedWidth(58)
         self.connection_check = QtWidgets.QPushButton()
-        self.connection_check.setFixedWidth(66)
-        resource_row.addWidget(self.resource_combo, 1)
-        resource_row.addWidget(self.resource_refresh)
-        resource_row.addWidget(self.connection_check)
+        resource_row.addWidget(self.resource_refresh, 1)
+        resource_row.addWidget(self.connection_check, 1)
         outer.addLayout(resource_row)
 
         self.mode_combo = QtWidgets.QComboBox()
@@ -149,9 +147,6 @@ class InstrumentControlPanel(QtWidgets.QWidget):
                 QtWidgets.QSizePolicy.Policy.Expanding,
                 QtWidgets.QSizePolicy.Policy.Fixed,
             )
-        # This field shares a row with two fixed buttons. Leave room for
-        # platforms whose vertical scrollbar occupies part of the sidebar.
-        self.resource_combo.setMinimumContentsLength(2)
         for combo in (
             self.model_combo,
             self.function_combo,

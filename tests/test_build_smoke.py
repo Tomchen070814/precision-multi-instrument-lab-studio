@@ -12,6 +12,7 @@ from PySide6 import QtGui, QtWidgets
 import hp3458a_studio.__main__ as main_module
 import hp3458a_studio.build_smoke as smoke_module
 from hp3458a_studio.models import SessionData
+from hp3458a_studio.styles import APP_STYLE
 
 
 @pytest.fixture
@@ -188,6 +189,79 @@ def test_smoke_font_info_negative_pixels_does_not_reject_readable_actual_font(
         and evidence["effective_font_pixel_size"] == 22
         for evidence in report["readout_layout"].values()
     )
+
+
+@pytest.mark.parametrize("overlap", [0, 14])
+def test_smoke_detects_dashboard_tab_overlap_in_shared_window_coordinates(
+    screenshot_widgets, tmp_path, overlap
+):
+    window, demo = screenshot_widgets
+    holder = QtWidgets.QWidget(window)
+    holder.setGeometry(0, 50, 350, 190)
+    window.dashboard_scroll = QtWidgets.QScrollArea(holder)
+    window.dashboard_scroll.setGeometry(0, 10, 350, 100)
+    window.tabs = QtWidgets.QTabWidget(window)
+    window.tabs.setGeometry(0, 160 - overlap, 350, 90)
+    holder.show()
+    window.dashboard_scroll.show()
+    window.tabs.show()
+    QtWidgets.QApplication.processEvents()
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(window, demo, tmp_path / "dashboard.json", report)
+    evidence = report["dashboard_layout"]
+    assert evidence["dashboard_bottom"] == 160
+    assert evidence["tabs_top"] == 160 - overlap
+    assert evidence["overlap_px"] == overlap
+    assert report["result"] == ("failed" if overlap else "passed")
+    if overlap:
+        assert any(
+            "overlaps analysis tabs by 14px" in reason
+            for reason in report["failure_reasons"]
+        )
+
+
+@pytest.mark.parametrize(
+    "clipped", [None, "resource_combo", "resource_refresh", "connection_check"]
+)
+def test_smoke_detects_truncated_resource_text_using_native_font_metrics(
+    screenshot_widgets, tmp_path, clipped
+):
+    window, demo = screenshot_widgets
+    panel = QtWidgets.QWidget(window)
+    panel.setStyleSheet(APP_STYLE)
+    panel.setGeometry(0, 0, 350, 130)
+    combo = QtWidgets.QComboBox(panel)
+    combo.setEditable(True)
+    combo.addItem("GPIB0::21::INSTR")
+    combo.setGeometry(0, 0, 340, 38)
+    scan = QtWidgets.QPushButton("Scan", panel)
+    scan.setGeometry(0, 45, 150, 38)
+    check = QtWidgets.QPushButton("Self-check", panel)
+    check.setGeometry(160, 45, 170, 38)
+    window.panels = {
+        "A": SimpleNamespace(
+            resource_combo=combo, resource_refresh=scan, connection_check=check
+        )
+    }
+    if clipped is not None:
+        getattr(window.panels["A"], clipped).setFixedWidth(45)
+    panel.show()
+    QtWidgets.QApplication.processEvents()
+    report = {"result": "passed", "failure_reasons": []}
+    smoke_module._capture_ui_evidence(window, demo, tmp_path / "resource.json", report)
+    evidence = report["instrument_panel_resource"]["A"]
+    assert set(evidence) == {"resource_combo", "resource_refresh", "connection_check"}
+    assert report["result"] == ("failed" if clipped else "passed")
+    for name, details in evidence.items():
+        assert details["text_fits_width"] == (name != clipped)
+        assert details["font_metrics_width"] > 0
+        assert details["widget_rect"]["width"] > 0
+        assert details["text_rect"]["width"] == details["available_text_width"]
+    if clipped:
+        assert any(
+            f"DMM A {clipped} text is clipped" in reason
+            for reason in report["failure_reasons"]
+        )
 
 
 @pytest.mark.parametrize("startup_fails", [False, True])

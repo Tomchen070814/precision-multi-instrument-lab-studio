@@ -174,6 +174,74 @@ def _capture_ui_evidence(window, demo, report_path: Path, report: dict) -> None:
                     f"text={width}x{height}, available={content.width()}x{content.height()}"
                 )
         report["readout_layout"] = readout_evidence
+        if hasattr(window, "dashboard_scroll") or hasattr(window, "tabs"):
+            dashboard_rect = widget_rect(window.dashboard_scroll)
+            tabs_rect = widget_rect(window.tabs)
+            # Use the exclusive bottom so adjacent rectangles do not falsely
+            # overlap by one pixel, and map both widgets to the same window.
+            dashboard_bottom = dashboard_rect["y"] + dashboard_rect["height"]
+            tabs_top = tabs_rect["y"]
+            overlap = max(0, dashboard_bottom - tabs_top)
+            report["dashboard_layout"] = {
+                "dashboard_rect": dashboard_rect,
+                "tabs_rect": tabs_rect,
+                "dashboard_bottom": dashboard_bottom,
+                "tabs_top": tabs_top,
+                "overlap_px": overlap,
+            }
+            if overlap:
+                report["failure_reasons"].append(
+                    f"Dashboard overlaps analysis tabs by {overlap}px: "
+                    f"dashboard bottom={dashboard_bottom}, tabs top={tabs_top}"
+                )
+        if hasattr(window, "panels"):
+            panel = window.panels["A"]
+            resource_evidence = {}
+            for name in ("resource_combo", "resource_refresh", "connection_check"):
+                control = getattr(panel, name)
+                if name == "resource_combo":
+                    editor = control.lineEdit()
+                    text = control.currentText()
+                    metrics = editor.fontMetrics()
+                    margins = editor.textMargins()
+                    available = max(
+                        0,
+                        editor.contentsRect().width()
+                        - margins.left()
+                        - margins.right(),
+                    )
+                    text_rect = widget_rect(editor)
+                    content = editor.contentsRect()
+                    text_rect["x"] += content.x() + margins.left()
+                    text_rect["y"] += content.y() + margins.top()
+                    text_rect["width"] = available
+                    text_rect["height"] = max(
+                        0, content.height() - margins.top() - margins.bottom()
+                    )
+                else:
+                    text = control.text()
+                    metrics = control.fontMetrics()
+                    # APP_STYLE buttons have 12 px padding and 1 px border on
+                    # each horizontal edge. Native font metrics remain Qt's.
+                    available = max(0, control.width() - 26)
+                    text_rect = widget_rect(control)
+                    text_rect["x"] += 13
+                    text_rect["width"] = available
+                text_width = metrics.horizontalAdvance(text)
+                resource_evidence[name] = {
+                    "text": text,
+                    "font_metrics_width": text_width,
+                    "available_text_width": available,
+                    "widget_rect": widget_rect(control),
+                    "text_rect": text_rect,
+                    "text_fits_width": text_width <= available,
+                }
+                if text_width > available:
+                    report["failure_reasons"].append(
+                        f"DMM A {name} text is clipped: "
+                        f"text={text_width}px, available={available}px"
+                    )
+            report["instrument_panel_resource"] = {"A": resource_evidence}
     except (OSError, RuntimeError, ValueError) as exc:
         report["failure_reasons"].append(f"Main-window screenshot failed: {exc}")
     smu_image_path = image_path.with_name(f"{image_path.stem}-smu.png")

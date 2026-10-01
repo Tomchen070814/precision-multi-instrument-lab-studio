@@ -56,10 +56,11 @@ IO Libraries。单个 EXE 不包含厂商内核驱动或驱动安装流程。
 
 GitHub Actions 在 Windows 运行 Python 3.11/3.14 回归，并用 3.11 构建单文件 EXE。
 构建后直接运行 EXE 的 `--smoke-test`，检查三路 DMM 各 15 点、V/Ω/A 单位与
-实际 CSV、虚拟 I-V 三路各 21 点、Qt 计时器和安全退出。该阶段使用原生 Windows Qt
+实际 CSV、虚拟 I-V 三路各 21 点、Qt 计时器、读数完整显示、指标卡布局与资源按钮文字，
+以及安全退出。该阶段使用原生 Windows Qt
 插件，移除 PATH 中的 Python 和 PYTHONPATH；JSON 结果与窗口 PNG 保存在
 `Windows-frozen-validation` 工件。只有相应运行的完整回归与 frozen smoke 成功，
-才视为该修订通过 Windows 打包验证；当前修订仍待成功结果。
+才视为该修订通过 Windows 打包验证；结果以对应修订的运行记录为准。
 本机硬件验收仍须覆盖具体仪表型号、固件、控制器和长时间连续采集。
 
 可在 Windows 构建：

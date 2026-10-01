@@ -148,6 +148,20 @@ class PrecisionValueLabel(QtWidgets.QLabel):
             self._fitting = False
 
 
+class AnalysisTabWidget(QtWidgets.QTabWidget):
+    """Let the center layout allocate the explicitly fitted page height."""
+
+    def hasHeightForWidth(self) -> bool:
+        # QTabWidget combines every page's height-for-width, including hidden
+        # analysis pages. Those hints can exceed the available center height
+        # and make QVBoxLayout overlap the fixed-height dashboard with the tabs.
+        # MainWindow fits the visible trend controls and plot minimum itself.
+        return False
+
+    def heightForWidth(self, width: int) -> int:
+        return -1
+
+
 def format_number(value: float, unit: str = "", significant: int = 6) -> str:
     if not np.isfinite(value):
         return "—"
@@ -571,7 +585,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dashboard_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.dashboard_scroll)
 
-        self.tabs = QtWidgets.QTabWidget()
+        self.tabs = AnalysisTabWidget()
         self.tabs.setDocumentMode(True)
         self.trend_tab_index = self.tabs.addTab(self._build_trend_tab(), "多通道趋势")
         self.spectrum_tab_index = self.tabs.addTab(
@@ -1642,6 +1656,14 @@ class MainWindow(QtWidgets.QMainWindow):
             natural_height = dashboard.sizeHint().height()
         natural_height = max(natural_height, dashboard.minimumSizeHint().height())
         self.dashboard_scroll.setFixedHeight(min(natural_height, max(0, available)))
+        # setFixedHeight changes the scroll area's geometry immediately. Apply
+        # the sibling allocation in this callback too, before Qt can paint a
+        # frame with the previous tab position after a sample or resize event.
+        center_layout = self.center_panel.layout()
+        center_layout.invalidate()
+        center_layout.activate()
+        dashboard.layout().activate()
+        page_layout.activate()
 
     def _fit_readout_labels(self) -> None:
         self._readout_fit_pending = False

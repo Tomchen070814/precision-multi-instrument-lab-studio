@@ -907,6 +907,125 @@ def test_large_window_shows_complete_readouts_and_all_metrics(window, size, lang
         }
 
 
+def _assert_center_dashboard_allocation(window):
+    scroll = window.dashboard_scroll
+    tabs = window.tabs
+    diagnostics = {
+        "window": window.size().toTuple(),
+        "center": window.center_panel.size().toTuple(),
+        "dashboard_scroll": scroll.geometry().getRect(),
+        "dashboard_content": scroll.widget().geometry().getRect(),
+        "tabs": tabs.geometry().getRect(),
+        "tabs_minimum": tabs.minimumHeight(),
+        "tabs_height_for_width": tabs.heightForWidth(tabs.width()),
+        "plot_viewport": window.trend_plot.viewport().size().toTuple(),
+    }
+    assert (
+        scroll.geometry().bottom() + window.center_panel.layout().spacing()
+        < tabs.geometry().top()
+    ), json.dumps(diagnostics, indent=2)
+    assert window.trend_plot.viewport().height() >= 120, json.dumps(
+        diagnostics, indent=2
+    )
+    if scroll.verticalScrollBar().maximum() == 0:
+        for card in (*window.readout_cards.values(), *window.metric_cards.values()):
+            bounds = QtCore.QRect(
+                card.mapTo(scroll.viewport(), QtCore.QPoint(0, 0)), card.size()
+            )
+            assert scroll.viewport().rect().contains(bounds), json.dumps(
+                {**diagnostics, "card": bounds.getRect()}, indent=2
+            )
+
+
+@pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
+@pytest.mark.parametrize("font_family", ["Segoe UI", "Arial"])
+@pytest.mark.parametrize("size", [(1180, 720), (1180, 749)])
+def test_dashboard_never_overlaps_tabs_during_startup_layout(
+    window, style_name, font_family, size
+):
+    previous_style = QtWidgets.QApplication.style().objectName()
+    try:
+        QtWidgets.QApplication.setStyle(style_name)
+        window.center_panel.setStyleSheet(f"* {{ font-family: '{font_family}'; }}")
+        window.resize(*size)
+        window.show()
+        # Each event delivery can change wrapped readout heights. A final
+        # qWait(200) alone hides the native frame that originally overlapped.
+        for frame in range(4):
+            QtWidgets.QApplication.processEvents()
+            _assert_center_dashboard_allocation(window)
+            if frame == 0:
+                window.grab()
+    finally:
+        QtWidgets.QApplication.setStyle(previous_style)
+
+
+@pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
+@pytest.mark.parametrize("size", [(1180, 720), (1180, 749)])
+def test_dashboard_stays_separate_while_samples_and_finalization_resize_text(
+    window, style_name, size
+):
+    previous_style = QtWidgets.QApplication.style().objectName()
+    try:
+        QtWidgets.QApplication.setStyle(style_name)
+        window.channel_c_enabled.setChecked(True)
+        for check in window.sync_channel_checks.values():
+            check.setChecked(True)
+        for channel, function in zip(
+            window.CHANNELS,
+            (
+                MeasurementFunction.DC_VOLTAGE,
+                MeasurementFunction.RESISTANCE_4W,
+                MeasurementFunction.DC_CURRENT,
+            ),
+            strict=True,
+        ):
+            panel = window.panels[channel]
+            panel.driver_combo.setCurrentIndex(panel.driver_combo.findData("sim"))
+            panel.function_combo.setCurrentIndex(
+                panel.function_combo.findData(function.value)
+            )
+            panel.precision_length_combo.setCurrentIndex(
+                panel.precision_length_combo.findData("fixed")
+            )
+            panel.precision_count.setValue(15)
+            panel.interval_spin.setValue(0.01)
+        window.resize(*size)
+        window.show()
+        window._start_both()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            QtWidgets.QApplication.processEvents()
+            _assert_center_dashboard_allocation(window)
+            if all(
+                len(runtime.session) == 15 and not runtime.running
+                for runtime in window.channels.values()
+            ):
+                break
+            QtTest.QTest.qWait(5)
+        assert all(
+            len(runtime.session) == 15 and not runtime.running
+            for runtime in window.channels.values()
+        ), json.dumps(
+            {
+                channel: {
+                    "samples": len(runtime.session),
+                    "running": runtime.running,
+                    "state": runtime.state,
+                    "error": runtime.error,
+                }
+                for channel, runtime in window.channels.items()
+            },
+            indent=2,
+        )
+        assert all(runtime.state == "已完成" for runtime in window.channels.values())
+        for _ in range(4):
+            QtWidgets.QApplication.processEvents()
+            _assert_center_dashboard_allocation(window)
+    finally:
+        QtWidgets.QApplication.setStyle(previous_style)
+
+
 @pytest.mark.parametrize("with_recovery", [False, True])
 def test_autosave_language_preserves_recovery_status_without_rescanning(
     window, monkeypatch, with_recovery

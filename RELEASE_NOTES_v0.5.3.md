@@ -20,6 +20,8 @@
 - 读数卡显示本次采集设定的 Δt，并说明慢采样等待；仪器设置的滚轮操作
   只滚动面板，防止采样间隔、测量功能或量程被意外修改。
 - 右侧参数区支持垂直滚动；较小窗口不会压缩会话、身份与保存卡片并遮住文字。
+- VISA 地址独占一行，扫描/自检按钮按完整文本分配宽度，避免英文按钮被固定宽度截断。
+- 隐藏分析页不再影响中心区高度分配；启动、采集中及保存终结时，指标卡与标签栏保持间距。
 - 窄窗口或较大字体下，右侧按钮、复选框和长自动保存路径按宽度换行；
   左侧仪器选项不再撑宽参数区或在获得焦点时横向移动。
 - 采样间隔 Δt 独立显示，趋势工具栏分两行；语言切换保留实时仪器来源、
@@ -81,8 +83,8 @@
 自动回归数量与 Windows 打包验证结果见对应 GitHub Actions 运行。
 自动测试使用数字孪生、模拟 VISA 后端和离屏 Qt 界面，覆盖三个通道的独立
 点数、同步失败、关闭保存、仪器切换、CSV 往返与大数值缩放。Windows CI
-会另外运行测试并打包 EXE。当前修订的 Windows 完整回归和 frozen EXE
-冒烟验证仍待成功结果；构建流程的存在不代表该修订已通过验证。
+会另外运行测试并打包 EXE。只有对应修订的完整回归和 frozen EXE
+冒烟验证都成功，才视为该修订通过；构建流程的存在不代表验证成功。
 
 真实仪表、VISA/GPIB 控制器和固件组合仍需在实验室验收。软件级同步启动
 不提供硬件触发同步。进程突然终止可能丢失尚未同步的队列末尾；已落盘数据保留。
@@ -99,5 +101,5 @@ The update fixes multi-axis zoom/clipping, shared VISA manager ownership,
 synchronized startup cancellation, queued samples at shutdown, model/function
 selection, and channel-aligned CSV import with timestamps, units and temperature.
 Hardware acceptance remains pending for each real instrument/backend combination.
-Windows regression and frozen-EXE smoke validation for this revision are pending;
-check the corresponding GitHub Actions run for the result.
+Check the corresponding GitHub Actions run for this revision's Windows regression
+and frozen-EXE smoke results; both must pass for a validated build.
