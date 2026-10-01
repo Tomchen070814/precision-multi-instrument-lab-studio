@@ -143,6 +143,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.language not in {"zh", "en"}:
             self.language = "zh"
         self._static_text_widgets: list[tuple[QtWidgets.QWidget, str]] = []
+        self._inspector_control_texts: dict[QtWidgets.QWidget, str] = {}
+        self._inspector_fit_pending = False
         self.setWindowTitle("Precision Multi-Instrument Lab Studio")
         self.resize(1600, 960)
         self.setMinimumSize(1180, 720)
@@ -456,20 +458,38 @@ class MainWindow(QtWidgets.QMainWindow):
         value_row.addWidget(unit, alignment=QtCore.Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(value_row)
 
-        bottom = QtWidgets.QHBoxLayout()
         mode = QtWidgets.QLabel("DCV · AUTO")
         mode.setObjectName("hint")
+        mode.setWordWrap(True)
+        mode.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(mode)
+        details = QtWidgets.QHBoxLayout()
+        interval = QtWidgets.QLabel("Δt —")
+        interval.setObjectName("hint")
         time_label = QtWidgets.QLabel("等待数据")
         time_label.setObjectName("hint")
+        time_label.setWordWrap(True)
+        time_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         temperature = QtWidgets.QLabel("TEMP —")
         temperature.setObjectName("hint")
-        bottom.addWidget(mode)
-        bottom.addStretch()
-        bottom.addWidget(time_label)
-        bottom.addWidget(temperature)
-        layout.addLayout(bottom)
+        details.addWidget(interval)
+        details.addStretch()
+        details.addWidget(temperature)
+        layout.addLayout(details)
+        layout.addWidget(time_label)
         extremes = QtWidgets.QLabel("MIN —  ·  MAX —")
         extremes.setObjectName("hint")
+        extremes.setWordWrap(True)
+        extremes.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         layout.addWidget(extremes)
         self.readouts[key] = {
             "tag": tag,
@@ -478,6 +498,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "value": value,
             "unit": unit,
             "mode": mode,
+            "interval": interval,
             "time": time_label,
             "temperature": temperature,
             "extremes": extremes,
@@ -488,40 +509,60 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(8, 8, 8, 8)
-        top = QtWidgets.QHBoxLayout()
         self.comparison_note = QtWidgets.QLabel(
             "A 青色 · B 紫色 · C 绿色；不同物理量使用独立 Y 轴"
         )
         self.comparison_note.setObjectName("hint")
-        top.addWidget(self.comparison_note)
-        top.addStretch()
+        self.comparison_note.setWordWrap(True)
+        self.comparison_note.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(self.comparison_note)
+        toolbar = QtWidgets.QWidget()
+        top = QtWidgets.QGridLayout(toolbar)
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         self.trend_axis_combo = QtWidgets.QComboBox()
         self.trend_axis_combo.addItem("全部 Y 轴", "")
         self.trend_axis_combo.setMinimumWidth(98)
-        top.addWidget(self.trend_axis_combo)
+        top.addWidget(self.trend_axis_combo, 0, 0)
         self.zoom_x_in_button = QtWidgets.QPushButton("X 放大")
         self.zoom_x_out_button = QtWidgets.QPushButton("X 缩小")
         self.zoom_y_in_button = QtWidgets.QPushButton("Y 放大")
         self.zoom_y_out_button = QtWidgets.QPushButton("Y 缩小")
-        for button in (
-            self.zoom_x_in_button,
-            self.zoom_x_out_button,
-            self.zoom_y_in_button,
-            self.zoom_y_out_button,
+        for index, button in enumerate(
+            (
+                self.zoom_x_in_button,
+                self.zoom_x_out_button,
+                self.zoom_y_in_button,
+                self.zoom_y_out_button,
+            )
         ):
             button.setMinimumWidth(64)
-            top.addWidget(button)
+            top.addWidget(button, 0, index + 1)
         self.box_zoom_button = QtWidgets.QPushButton("框选放大")
         self.box_zoom_button.setCheckable(True)
         self.box_zoom_button.setToolTip(
             "启用后拖动矩形框，同时缩放时间轴和各物理量 Y 轴的对应矩形范围。"
         )
         self.reset_zoom_button = QtWidgets.QPushButton("重置视图")
-        top.addWidget(self.box_zoom_button)
-        top.addWidget(self.reset_zoom_button)
+        top.addWidget(self.box_zoom_button, 1, 0)
+        top.addWidget(self.reset_zoom_button, 1, 1, 1, 2)
         self.clear_marks_button = QtWidgets.QPushButton("清除标记")
-        top.addWidget(self.clear_marks_button)
-        layout.addLayout(top)
+        top.addWidget(self.clear_marks_button, 1, 3, 1, 2)
+        self.trend_toolbar_scroll = QtWidgets.QScrollArea()
+        self.trend_toolbar_scroll.setWidgetResizable(True)
+        self.trend_toolbar_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.trend_toolbar_scroll.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.trend_toolbar_scroll.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.trend_toolbar_scroll.setWidget(toolbar)
+        layout.addWidget(self.trend_toolbar_scroll)
         self.trend_plot = InteractivePlot()
         self.trend_plot.set_labels("当前时间戳", "测量值", "V")
         layout.addWidget(self.trend_plot, 1)
@@ -867,6 +908,27 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         layout.addWidget(self.export_diagnostic_button)
         layout.addStretch()
+        # Long translations and platform font metrics must wrap within the
+        # viewport rather than set a wider minimum for the whole inspector.
+        for label in inspector.findChildren(QtWidgets.QLabel):
+            label.setWordWrap(True)
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
+            label.setSizePolicy(policy)
+        # A form's label column needs its natural width; ignoring these labels
+        # collapses it to zero before the fields receive their remaining space.
+        for card_form in (form, identity_form):
+            for row in range(card_form.rowCount()):
+                label = card_form.itemAt(
+                    row, QtWidgets.QFormLayout.ItemRole.LabelRole
+                ).widget()
+                policy = label.sizePolicy()
+                policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Preferred)
+                label.setSizePolicy(policy)
+        self.event_log.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         self.inspector_scroll = QtWidgets.QScrollArea()
         self.inspector_scroll.setObjectName("inspectorScroll")
         self.inspector_scroll.setWidgetResizable(True)
@@ -877,6 +939,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.inspector_scroll.setWidget(inspector)
+        inspector.installEventFilter(self)
+        self.inspector_scroll.viewport().installEventFilter(self)
         return self.inspector_scroll
 
     def _section(self, text: str) -> QtWidgets.QLabel:
@@ -907,6 +971,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "analysisMeta",
             "memoryMonitor",
         }
+        dynamic_widgets = {self.header_source, self.brand_subtitle}
+        dynamic_widgets.update(
+            label for readout in self.readouts.values() for label in readout.values()
+        )
         for widget_type in (
             QtWidgets.QLabel,
             QtWidgets.QPushButton,
@@ -921,7 +989,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         break
                     parent = parent.parentWidget()
                 text = widget.text()
-                if inside_panel or not text or widget.objectName() in excluded_names:
+                if (
+                    inside_panel
+                    or not text
+                    or widget.objectName() in excluded_names
+                    or widget in dynamic_widgets
+                ):
                     continue
                 self._static_text_widgets.append((widget, text))
 
@@ -1032,6 +1105,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_channel_model_ui(key)
         self._update_channel_c_ui()
         self._update_sync_controls()
+        self._update_header_sources()
+        self._inspector_control_texts = {
+            control: control.text()
+            for control in (
+                self.multi_analysis_check,
+                self.show_rolling,
+                self.outlier_check,
+                self.allan_normalized,
+                self.import_button,
+                self.export_button,
+                self.export_both_button,
+                self.clear_button,
+                self.open_autosave_button,
+                self.export_diagnostic_button,
+            )
+        }
+        self._fit_inspector_controls()
+        self._fit_trend_toolbar()
         self._refresh_views()
 
     def _retranslate_readout(self, channel: str) -> None:
@@ -1049,15 +1140,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.language == "en"
                 else f"{runtime.target_samples:,}点"
             )
-        readout["mode"].setText(
-            f"{command} · {range_text} · {length_text}"
-            + (
-                f" · Δt {runtime.sample_interval_s:g} s"
-                if runtime.sample_interval_s is not None
-                else ""
-            )
-        )
+        readout["mode"].setText(f"{command} · {range_text} · {length_text}")
         self._update_sampling_hint(channel)
+        readout["temperature"].setText(
+            f"TEMP {runtime.last_temperature:.3f}°C"
+            if np.isfinite(runtime.last_temperature)
+            else "TEMP —"
+        )
         if not count:
             readout["time"].setText(tr(self.language, "等待数据"))
             readout["extremes"].setText("MIN —  ·  MAX —")
@@ -1254,6 +1343,73 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_channel_model_ui(channel)
         self._refresh_views()
 
+    def eventFilter(self, watched, event) -> bool:
+        scroll = getattr(self, "inspector_scroll", None)
+        if (
+            scroll is not None
+            and watched in (scroll.widget(), scroll.viewport())
+            and event.type()
+            in (
+                QtCore.QEvent.Type.Resize,
+                QtCore.QEvent.Type.LayoutRequest,
+                QtCore.QEvent.Type.StyleChange,
+                QtCore.QEvent.Type.FontChange,
+            )
+            and not self._inspector_fit_pending
+        ):
+            self._inspector_fit_pending = True
+            QtCore.QTimer.singleShot(0, self._fit_inspector_controls)
+        return super().eventFilter(watched, event)
+
+    @staticmethod
+    def _wrap_control_text(text: str, metrics: QtGui.QFontMetrics, width: int) -> str:
+        lines: list[str] = []
+        current = ""
+        for word in text.split():
+            candidate = f"{current} {word}" if current else word
+            if metrics.horizontalAdvance(candidate) <= width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            for character in word:
+                candidate = current + character
+                if current and metrics.horizontalAdvance(candidate) > width:
+                    lines.append(current)
+                    current = character
+                else:
+                    current = candidate
+        if current:
+            lines.append(current)
+        return "\n".join(lines)
+
+    def _fit_inspector_controls(self) -> None:
+        self._inspector_fit_pending = False
+        scroll = getattr(self, "inspector_scroll", None)
+        if scroll is None or self._shutdown_complete:
+            return
+        content_width = max(80, scroll.viewport().width() - 28)
+        for control, text in self._inspector_control_texts.items():
+            inset = 26
+            if control is self.open_autosave_button:
+                inset += 24
+            wrapped = self._wrap_control_text(
+                text, control.fontMetrics(), max(40, content_width - inset)
+            )
+            if control.text() != wrapped:
+                control.setText(wrapped)
+
+    def _fit_trend_toolbar(self) -> None:
+        scroll = self.trend_toolbar_scroll
+        # Reserve scrollbar space even when the translated controls fit. This
+        # prevents changing the chart height while resizing the window.
+        height = scroll.widget().sizeHint().height()
+        height += scroll.style().pixelMetric(
+            QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent
+        )
+        scroll.setFixedHeight(height + 2)
+
     def _update_sampling_hint(self, channel: str) -> None:
         interval = self.channels[channel].sample_interval_s
         hint = (
@@ -1268,6 +1424,10 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.readouts[channel]["time"].setToolTip(hint)
         self.readouts[channel]["mode"].setToolTip(hint)
+        self.readouts[channel]["interval"].setText(
+            f"Δt {interval:g} s" if interval is not None else "Δt —"
+        )
+        self.readouts[channel]["interval"].setToolTip(hint)
 
     def _analysis_channel_selected(self, *_args) -> None:
         """A specific instrument choice opens its individual data view."""
@@ -1865,7 +2025,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 if runtime.target_samples is not None
                 else (" · CONTINUOUS" if self.language == "en" else " · 持续")
             )
-            + f" · Δt {runtime.sample_interval_s:g} s"
         )
         self._update_sampling_hint(channel)
         readout["unit"].setText(config.function.unit)

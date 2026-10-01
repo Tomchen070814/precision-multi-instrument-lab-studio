@@ -26,6 +26,8 @@ Restarting one instrument after a function change restores its new time range;
 slow captures show their first point and requested interval. Scrolling the
 settings panel cannot accidentally change acquisition parameters. The plotting
 dependency requires pyqtgraph 0.14 or later.
+Narrow side panels wrap their controls, and language changes preserve live source,
+temperature and acquisition status for each instrument.
 The v0.5.2 release built on the 14-model architecture in
 v0.5.1 with connection self-tests, layered driver/GPIB diagnostics, mandatory
 data-source identification, real-time memory monitoring, and long-session

@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 
 from hp3458a_studio.instrument_panel import InstrumentControlPanel
 from hp3458a_studio.models import InstrumentModel, MeasurementFunction
+from hp3458a_studio.styles import APP_STYLE
 
 
 @pytest.fixture(scope="module")
@@ -126,4 +127,54 @@ def test_wheel_over_setting_scrolls_panel_without_editing_it(app):
     assert panel.interval_spin.value() == interval
     scroll.close()
     scroll.deleteLater()
+    app.processEvents()
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize(
+    "model", [InstrumentModel.KEYSIGHT_3458A, InstrumentModel.FLUKE_8508A]
+)
+def test_translated_panel_fits_minimum_sidebar_without_horizontal_focus_pan(
+    app, language, model
+):
+    window = QtWidgets.QWidget()
+    window.setStyleSheet(APP_STYLE)
+    window.resize(1180, 800)
+    layout = QtWidgets.QHBoxLayout(window)
+    scroll = QtWidgets.QScrollArea()
+    # Main sidebar's 295 px minimum less its 24 px layout margins.
+    scroll.setFixedWidth(271)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    panel = InstrumentControlPanel("A", "GPIB0::21::INSTR", language=language)
+    panel.model_combo.setCurrentIndex(panel.model_combo.findData(model.value))
+    panel.interval_spin.setValue(21.1)
+    scroll.setWidget(panel)
+    layout.addWidget(scroll)
+    layout.addWidget(QtWidgets.QWidget(), 1)
+    window.show()
+    app.processEvents()
+    for control in (
+        panel.model_combo,
+        panel.function_combo,
+        panel.precision_length_combo,
+        panel.interval_spin,
+        panel.resource_combo,
+    ):
+        control.setFocus()
+        scroll.ensureWidgetVisible(control)
+        app.processEvents()
+        assert scroll.horizontalScrollBar().maximum() == 0
+        assert scroll.horizontalScrollBar().value() == 0
+        assert panel.mapTo(scroll.viewport(), QtCore.QPoint()).x() == 0
+        assert control.mapTo(scroll.viewport(), QtCore.QPoint()).x() >= 0
+        assert control.width() <= scroll.viewport().width()
+    assert panel.interval_spin.value() == 21.1
+    assert panel.model_combo.toolTip() == panel.model_combo.currentText()
+    assert (
+        panel.precision_length_combo.toolTip()
+        == panel.precision_length_combo.currentText()
+    )
+    window.close()
+    window.deleteLater()
     app.processEvents()

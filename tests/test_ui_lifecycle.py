@@ -336,6 +336,175 @@ def test_inspector_scrolls_without_compressing_parameter_cards(window, size, lan
     assert "automatically" not in window.box_zoom_button.toolTip()
 
 
+@pytest.mark.parametrize("style_name", ["Windows", "Fusion"])
+@pytest.mark.parametrize("font_px", [18, 24])
+def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
+    app, window, style_name, font_px
+):
+    previous_style = app.style().objectName()
+    app.setStyle(QtWidgets.QStyleFactory.create(style_name))
+    try:
+        window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+        scroll = window.inspector_scroll
+        scroll.setMaximumWidth(260)
+        scroll.widget().setStyleSheet(f"* {{ font-size: {font_px}px; }}")
+        window.identity_model.setText("Keysight Technologies 34470A")
+        window.identity_resource.setText("TCPIP0::192.168.100.123::inst0::INSTR")
+        window.autosave_path_label.setText(
+            "C:/Users/Windows-Measurement-Operator/AppData/Local/"
+            "Precision Multi-Instrument Lab Studio/autosave/2026-10-01"
+        )
+        window.resize(1180, 720)
+        window.show()
+        QtTest.QTest.qWait(100)
+
+        assert scroll.width() == 260
+        assert scroll.viewport().width() == 252
+        assert scroll.widget().width() <= scroll.viewport().width()
+        assert scroll.horizontalScrollBar().maximum() == 0
+        assert scroll.verticalScrollBar().maximum() > 0
+        for field in (
+            window.session_count,
+            window.identity_model,
+            window.autosave_status,
+        ):
+            card = field.parentWidget()
+            labels = card.findChildren(
+                QtWidgets.QLabel,
+                options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly,
+            )
+            for label in labels:
+                assert label.width() > 0
+                assert card.rect().contains(label.geometry())
+                if label.hasHeightForWidth():
+                    assert label.height() >= label.heightForWidth(label.width())
+            for index, first in enumerate(labels):
+                for second in labels[index + 1 :]:
+                    assert not first.geometry().intersects(second.geometry())
+        for control in window._inspector_control_texts:
+            scroll.ensureWidgetVisible(control)
+            QtWidgets.QApplication.processEvents()
+            bounds = QtCore.QRect(
+                control.mapTo(scroll.viewport(), QtCore.QPoint(0, 0)), control.size()
+            )
+            assert scroll.viewport().rect().contains(bounds)
+            assert control.width() >= control.minimumSizeHint().width()
+            assert control.height() >= control.sizeHint().height()
+            assert " ".join(control.text().split()) == " ".join(
+                window._inspector_control_texts[control].split()
+            )
+            text_width = control.width() - 26
+            assert all(
+                control.fontMetrics().horizontalAdvance(line) <= text_width
+                for line in control.text().splitlines()
+            )
+    finally:
+        app.setStyle(QtWidgets.QStyleFactory.create(previous_style))
+
+
+def test_language_change_preserves_live_sources_and_stopped_temperature(window):
+    window.channel_c_enabled.setChecked(True)
+    window.sync_channel_checks["C"].setChecked(True)
+    for panel in window.panels.values():
+        panel.interval_spin.setValue(0.02)
+    window._start_both()
+    assert _wait_until(
+        lambda: all(len(runtime.session) >= 2 for runtime in window.channels.values())
+    )
+    window._stop_channel("A")
+    assert _wait_until(lambda: not window.channels["A"].running)
+    window.channels["A"].last_temperature = 28.25
+    window._retranslate_readout("A")
+    sources = window.header_source.text()
+    temperature = window.readouts["A"]["temperature"].text()
+    readout_sources = {
+        key: labels["source"].text() for key, labels in window.readouts.items()
+    }
+    peers = {key: window.channels[key].worker for key in ("B", "C")}
+    peer_counts = {key: len(window.channels[key].session) for key in peers}
+    assert "C OFF" not in sources
+    assert temperature == "TEMP 28.250°C"
+    for language in ("en", "zh", "en"):
+        window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+        assert window.header_source.text() == sources
+        assert window.readouts["A"]["temperature"].text() == temperature
+        assert {
+            key: labels["source"].text() for key, labels in window.readouts.items()
+        } == readout_sources
+        assert window.brand_subtitle.text().startswith(
+            "MULTI-INSTRUMENT" if language == "en" else "多仪表精密测量与分析"
+        )
+        assert all(
+            window.channels[key].worker is worker for key, worker in peers.items()
+        )
+    assert _wait_until(
+        lambda: all(
+            len(window.channels[key].session) > peer_counts[key] for key in peers
+        )
+    )
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("size", [(1180, 720), (1600, 1000)])
+def test_readout_interval_and_trend_toolbar_remain_readable(window, size, language):
+    window.channel_c_enabled.setChecked(True)
+    for channel in window.CHANNELS:
+        runtime = window.channels[channel]
+        runtime.session.replace(
+            np.arange(20) * 0.1,
+            np.linspace(0.9, 1.1, 20),
+            "V",
+            "test",
+            timestamps=1_790_859_600 + np.arange(20) * 0.1,
+        )
+        runtime.sample_interval_s = 21.1
+        runtime.target_samples = 9_999_999
+        runtime.last_temperature = 28.25
+        runtime.minimum, runtime.maximum = 0.9, 1.1
+    window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+    for channel in window.CHANNELS:
+        window._retranslate_readout(channel)
+    window.resize(*size)
+    window.show()
+    QtTest.QTest.qWait(100)
+    assert window.size() == QtCore.QSize(*size)
+    assert window.trend_plot.viewport().height() >= 120
+    for channel, readout in window.readouts.items():
+        card = window.readout_cards[channel]
+        assert readout["interval"].text() == "Δt 21.1 s"
+        assert readout["interval"].width() >= readout["interval"].sizeHint().width()
+        assert "9,999,999" in readout["mode"].text()
+        for label in readout.values():
+            assert card.rect().contains(label.geometry())
+            if label.hasHeightForWidth():
+                assert label.height() >= label.heightForWidth(label.width())
+        labels = list(readout.values())
+        for index, first in enumerate(labels):
+            for second in labels[index + 1 :]:
+                assert not first.geometry().intersects(second.geometry())
+
+    toolbar = window.trend_toolbar_scroll
+    controls = (
+        window.trend_axis_combo,
+        window.zoom_x_in_button,
+        window.zoom_x_out_button,
+        window.zoom_y_in_button,
+        window.zoom_y_out_button,
+        window.box_zoom_button,
+        window.reset_zoom_button,
+        window.clear_marks_button,
+    )
+    for control in controls:
+        toolbar.ensureWidgetVisible(control)
+        QtWidgets.QApplication.processEvents()
+        bounds = QtCore.QRect(
+            control.mapTo(toolbar.viewport(), QtCore.QPoint(0, 0)), control.size()
+        )
+        assert toolbar.viewport().rect().contains(bounds)
+        assert control.width() >= control.sizeHint().width()
+        assert control.height() >= control.sizeHint().height()
+
+
 @pytest.mark.parametrize(
     ("function", "unit"),
     [(MeasurementFunction.RESISTANCE_4W, "Ω"), (MeasurementFunction.AC_VOLTAGE, "V")],
@@ -379,7 +548,7 @@ def test_restart_selected_channel_after_function_change_resets_old_zoom(
     assert window.trend_plot._channel_data["A"][1].size >= 4
     assert window.trend_plot._curves["A"].isVisible()
     assert "A" not in window.trend_plot._legend_hidden
-    assert "Δt 0.02 s" in window.readouts["A"]["mode"].text()
+    assert window.readouts["A"]["interval"].text() == "Δt 0.02 s"
     assert function.command in window.metric_basis_label.text()
     for key, worker in peers.items():
         assert window.channels[key].worker is worker
@@ -405,7 +574,7 @@ def test_long_sampling_interval_keeps_first_sample_and_explains_wait(window):
     assert window.trend_plot._channel_data["A"][1].size == 1
     assert window.trend_plot._curves["A"].isVisible()
     assert window.trend_plot._curves["A"].opts["symbol"] is not None
-    assert "Δt 21.1 s" in window.readouts["A"]["mode"].text()
+    assert window.readouts["A"]["interval"].text() == "Δt 21.1 s"
     assert "设定采样间隔：21.1 秒" in window.readouts["A"]["time"].toolTip()
     window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
     assert (

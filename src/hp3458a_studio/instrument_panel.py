@@ -135,6 +135,27 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         outer.addWidget(self.start_button)
         outer.addStretch()
 
+        # Long translated menu options must not widen a vertically scrolling
+        # panel. Hidden horizontal scrollbars can still pan it on focus changes.
+        for combo in self.findChildren(QtWidgets.QComboBox):
+            combo.setSizeAdjustPolicy(
+                QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(8)
+            combo.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+        self.resource_combo.setMinimumContentsLength(4)
+        for combo in (
+            self.model_combo,
+            self.function_combo,
+            self.range_combo,
+            self.precision_length_combo,
+        ):
+            combo.currentTextChanged.connect(combo.setToolTip)
+            combo.setToolTip(combo.currentText())
+
     def _connect_signals(self) -> None:
         self.model_combo.currentIndexChanged.connect(self._model_changed)
         self.driver_combo.currentIndexChanged.connect(self._driver_changed)
@@ -189,6 +210,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         layout.setSpacing(4)
         label = QtWidgets.QLabel(title)
         label.setObjectName("hint")
+        label.setWordWrap(True)
         self._field_labels.append((label, title))
         layout.addWidget(label)
         layout.addWidget(widget)
