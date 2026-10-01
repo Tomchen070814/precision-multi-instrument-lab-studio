@@ -10,6 +10,35 @@ from .styles import COLORS
 from .trend_logic import assign_unit_axes
 
 
+class _TrendDataItem(pg.PlotDataItem):
+    def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        if changed is None or changed[1]:
+            # Pyqtgraph's Y-limit hysteresis can otherwise reuse an unclipped
+            # dataset with stale clipping bounds after auto-fit then deep zoom.
+            self._datasetDisplay = None
+        super().viewRangeChanged(vb, ranges, changed)
+
+    def dataBounds(self, ax, frac=1.0, orthoRange=None):
+        # Clipping/downsampling changes the display dataset. Auto-ranging must
+        # use the original values, otherwise X zoom unexpectedly changes Y and
+        # large off-screen values expand the Y scale over several paint cycles.
+        x, y = self.getOriginalDataset()
+        if x is None or y is None:
+            return None, None
+        values, other = (x, y) if ax == 0 else (y, x)
+        mask = np.isfinite(values)
+        if orthoRange is not None:
+            mask &= (other >= orthoRange[0]) & (other <= orthoRange[1])
+        finite = values[mask]
+        if not finite.size:
+            return None, None
+        if frac < 1.0:
+            lower, upper = np.percentile(finite, [50 * (1 - frac), 50 * (1 + frac)])
+        else:
+            lower, upper = np.min(finite), np.max(finite)
+        return float(lower), float(upper)
+
+
 class _TrendViewBox(pg.ViewBox):
     rectangle_selected = QtCore.Signal(float, float)
 
@@ -107,6 +136,10 @@ class InteractivePlot(pg.PlotWidget):
         plot_item = self.getPlotItem()
         self._manual_x_range = False
         self._viewboxes = [plot_item.vb, _UnitViewBox(), _UnitViewBox()]
+        for view in self._viewboxes:
+            # One shared time range is fitted to all visible channels below;
+            # individual Y views must not replace it with their own X bounds.
+            view.enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
         self._axes = [
             plot_item.getAxis("left"),
             plot_item.getAxis("right"),
@@ -134,6 +167,7 @@ class InteractivePlot(pg.PlotWidget):
         self.legend = plot_item.addLegend(offset=(10, 10))
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._legend_labels: dict[str, str] = {}
+        self._legend_hidden: set[str] = set()
         self._channel_data: dict[str, tuple[np.ndarray, np.ndarray, str, str, str]] = {}
         self._channel_slots: dict[str, int] = {}
         self._unit_slots: dict[str, int] = {}
@@ -142,7 +176,7 @@ class InteractivePlot(pg.PlotWidget):
             self.CHANNELS,
             (COLORS["cyan"], COLORS["purple"], COLORS["green"]),
         ):
-            curve = pg.PlotDataItem(
+            curve = _TrendDataItem(
                 pen=pg.mkPen(color, width=1.6),
                 name=channel,
                 autoDownsample=True,
@@ -151,8 +185,8 @@ class InteractivePlot(pg.PlotWidget):
                 dynamicRangeLimit=1e3,
             )
             self._viewboxes[0].addItem(curve)
-            self.legend.addItem(curve, channel)
             self._curves[channel] = curve
+            self._add_legend_item(channel, channel)
             self._legend_labels[channel] = channel
 
         # Compatibility aliases retained for earlier UI automation.
@@ -160,7 +194,7 @@ class InteractivePlot(pg.PlotWidget):
         self.secondary_curve = self._curves["B"]
         self.tertiary_curve = self._curves["C"]
 
-        self.smooth_curve = pg.PlotDataItem(
+        self.smooth_curve = _TrendDataItem(
             pen=pg.mkPen(COLORS["yellow"], width=1.3),
             name="Rolling average",
             autoDownsample=True,
@@ -171,6 +205,7 @@ class InteractivePlot(pg.PlotWidget):
         self._viewboxes[0].addItem(self.smooth_curve)
         self.smooth_curve.setVisible(False)
         self._smooth_channel = "A"
+        self._smooth_enabled = False
 
         self.v_line = pg.InfiniteLine(
             angle=90,
@@ -247,7 +282,11 @@ class InteractivePlot(pg.PlotWidget):
         channel_units = {
             channel: self._channel_data[channel][2]
             for channel in self.CHANNELS
-            if (channel in self._channel_data and self._channel_data[channel][1].size)
+            if (
+                channel in self._channel_data
+                and self._channel_data[channel][1].size
+                and channel not in self._legend_hidden
+            )
         }
         channel_slots, self._unit_slots = assign_unit_axes(channel_units)
         routing_signature = tuple(
@@ -276,6 +315,7 @@ class InteractivePlot(pg.PlotWidget):
                     channel in self._channel_data
                     and self._channel_data[channel][2] == unit
                     and self._channel_data[channel][1].size
+                    and channel not in self._legend_hidden
                 )
             ]
             color = self._channel_data[channels[0]][3]
@@ -320,8 +360,64 @@ class InteractivePlot(pg.PlotWidget):
                 view.setYRange(y_min, y_max, padding=0)
                 view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=automatic)
         self._update_view_geometry()
+        self._fit_shared_x()
+
+    def _add_legend_item(self, channel: str, label: str) -> None:
+        curve = self._curves[channel]
+        self.legend.addItem(curve, label)
+        for sample, _label in self.legend.items:
+            if sample.item is curve:
+                sample.sigClicked.connect(
+                    lambda item, key=channel: self._legend_visibility_changed(key, item)
+                )
+                break
+
+    def _legend_visibility_changed(self, channel: str, curve: pg.PlotDataItem) -> None:
+        data = self._channel_data.get(channel)
+        if data is None or not data[1].size:
+            curve.setVisible(False)
+            return
+        if curve.isVisible():
+            self._legend_hidden.discard(channel)
+        else:
+            self._legend_hidden.add(channel)
+        self._assign_axes()
+
+    def restore_channel_visibility(self, channel: str) -> None:
+        """Show a channel explicitly selected or started by the user."""
+        curve = self._curves[channel]
+        self._legend_hidden.discard(channel)
+        data = self._channel_data.get(channel)
+        curve.setVisible(data is not None and bool(data[1].size))
+        self._assign_axes()
+
+    def _fit_shared_x(self) -> None:
+        if self._manual_x_range:
+            return
+        bounds = []
+        for channel, (x, y, _unit, _color, _label) in self._channel_data.items():
+            if not y.size or channel in self._legend_hidden:
+                continue
+            finite_x = x[np.isfinite(x)]
+            if finite_x.size:
+                bounds.append((float(np.min(finite_x)), float(np.max(finite_x))))
+        if not bounds:
+            return
+        lower = min(bound[0] for bound in bounds)
+        upper = max(bound[1] for bound in bounds)
+        if lower == upper:
+            lower -= 0.5
+            upper += 0.5
+        self._viewboxes[0].setXRange(lower, upper, padding=0.02)
 
     def _move_smooth_curve(self, channel: str) -> None:
+        data = self._channel_data.get(channel)
+        self.smooth_curve.setVisible(
+            self._smooth_enabled
+            and data is not None
+            and bool(data[1].size)
+            and channel not in self._legend_hidden
+        )
         slot = self._channel_slots.get(channel, 0)
         if self.smooth_curve in self._viewboxes[slot].addedItems:
             return
@@ -373,12 +469,19 @@ class InteractivePlot(pg.PlotWidget):
         )
         curve = self._curves[channel]
         curve.setPen(pg.mkPen(color, width=1.6))
-        curve.setData(x_array, y_array)
-        curve.setVisible(bool(y_array.size))
+        curve.setData(
+            x_array,
+            y_array,
+            symbol="o" if y_array.size == 1 else None,
+            symbolSize=7,
+            symbolPen=None,
+            symbolBrush=pg.mkBrush(color),
+        )
+        curve.setVisible(bool(y_array.size) and channel not in self._legend_hidden)
         old_label = self._legend_labels.get(channel, channel)
         if old_label != label:
             self.legend.removeItem(old_label)
-            self.legend.addItem(curve, label)
+            self._add_legend_item(channel, label)
             self._legend_labels[channel] = label
         if refresh_axes:
             self._assign_axes()
@@ -395,16 +498,18 @@ class InteractivePlot(pg.PlotWidget):
     ) -> None:
         self._smooth_channel = channel
         if y is None:
+            self._smooth_enabled = False
             self.smooth_curve.setVisible(False)
             return
         x_array = np.asarray(x, dtype=float)
         y_array = np.asarray(y, dtype=float)
         if x_array.size != y_array.size or not y_array.size:
+            self._smooth_enabled = False
             self.smooth_curve.setVisible(False)
             return
+        self._smooth_enabled = True
         self._move_smooth_curve(channel)
         self.smooth_curve.setData(x_array, y_array)
-        self.smooth_curve.setVisible(True)
 
     # Legacy single/secondary/tertiary methods used by older integrations.
     def set_data(
@@ -466,8 +571,9 @@ class InteractivePlot(pg.PlotWidget):
     def reset_view(self) -> None:
         self._manual_x_range = False
         for view in self._viewboxes:
-            view.enableAutoRange(x=True, y=True)
-            view.autoRange()
+            view.enableAutoRange(x=False, y=True)
+            view.updateAutoRange()
+        self._fit_shared_x()
 
     def zoom_x(self, factor: float) -> None:
         """Scale only the shared wall-clock axis around its current center."""

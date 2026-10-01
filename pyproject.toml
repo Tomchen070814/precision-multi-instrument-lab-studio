@@ -14,7 +14,7 @@ dependencies = [
   "numpy>=1.26",
   "scipy>=1.11",
   "PySide6>=6.7",
-  "pyqtgraph>=0.13.7",
+  "pyqtgraph>=0.14.0",
   "pyvisa>=1.14",
   "psutil>=5.9",
 ]

@@ -98,6 +98,7 @@ class ChannelRuntime:
     last_refresh_ms: int = 0
     error: str = ""
     target_samples: int | None = None
+    sample_interval_s: float | None = None
     durable_writer: DurableSessionWriter | None = None
     last_autosave_path: str = ""
     minimum: float = np.inf
@@ -769,7 +770,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("所选会话"))
         session_card = Card()
         form = QtWidgets.QFormLayout(session_card)
-        form.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         form.setContentsMargins(12, 11, 12, 11)
         self.session_count = QtWidgets.QLabel("0")
         self.session_duration = QtWidgets.QLabel("0 s")
@@ -792,7 +792,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("仪表身份"))
         identity_card = Card()
         identity_form = QtWidgets.QFormLayout(identity_card)
-        identity_form.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         identity_form.setContentsMargins(12, 11, 12, 11)
         self.identity_model = QtWidgets.QLabel("—")
         self.identity_resource = QtWidgets.QLabel("—")
@@ -834,9 +833,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("安全自动保存"))
         autosave_card = Card()
         autosave_layout = QtWidgets.QVBoxLayout(autosave_card)
-        autosave_layout.setSizeConstraint(
-            QtWidgets.QLayout.SizeConstraint.SetMinimumSize
-        )
         autosave_layout.setContentsMargins(12, 10, 12, 10)
         autosave_layout.setSpacing(6)
         self.autosave_status = QtWidgets.QLabel(
@@ -966,9 +962,20 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         self.stop_all_button.setText(tr(self.language, "停止全部"))
-        self.multi_analysis_check.setText(tr(self.language, "同时显示所有启用通道"))
+        self.multi_analysis_check.setText(
+            "Compare all channels" if self.language == "en" else "同时显示所有启用通道"
+        )
+        self.outlier_check.setText(
+            "Reject outliers" if self.language == "en" else "分析时剔除异常值"
+        )
         self.allan_normalized.setText(
             "Normalize Allan to ppm" if self.language == "en" else "Allan 归一化为 ppm"
+        )
+        self.open_autosave_button.setText(
+            "Open autosave folder" if self.language == "en" else "打开自动保存目录"
+        )
+        self.export_diagnostic_button.setText(
+            "Export diagnostics" if self.language == "en" else "导出诊断报告"
         )
         self.analysis_channel_combo.setToolTip(
             "Select an instrument to view its measurements and statistics. "
@@ -1042,7 +1049,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.language == "en"
                 else f"{runtime.target_samples:,}点"
             )
-        readout["mode"].setText(f"{command} · {range_text} · {length_text}")
+        readout["mode"].setText(
+            f"{command} · {range_text} · {length_text}"
+            + (
+                f" · Δt {runtime.sample_interval_s:g} s"
+                if runtime.sample_interval_s is not None
+                else ""
+            )
+        )
+        self._update_sampling_hint(channel)
         if not count:
             readout["time"].setText(tr(self.language, "等待数据"))
             readout["extremes"].setText("MIN —  ·  MAX —")
@@ -1239,6 +1254,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_channel_model_ui(channel)
         self._refresh_views()
 
+    def _update_sampling_hint(self, channel: str) -> None:
+        interval = self.channels[channel].sample_interval_s
+        hint = (
+            (
+                f"Requested sampling interval: {interval:g} s. "
+                "The next reading arrives after this interval or instrument integration."
+                if self.language == "en"
+                else f"设定采样间隔：{interval:g} 秒；下一次读数需等待该间隔或仪器积分完成。"
+            )
+            if interval is not None
+            else ""
+        )
+        self.readouts[channel]["time"].setToolTip(hint)
+        self.readouts[channel]["mode"].setToolTip(hint)
+
     def _analysis_channel_selected(self, *_args) -> None:
         """A specific instrument choice opens its individual data view."""
         channel = self.selected_channel
@@ -1249,18 +1279,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.device_tabs.setCurrentIndex(self.CHANNELS.index(channel))
             self.multi_analysis_check.setChecked(False)
         self._trend_x_window = None
+        self.trend_plot.restore_channel_visibility(channel)
         self.trend_plot.reset_view()
         self._refresh_views()
 
     def _analysis_channel_activated(self, *_args) -> None:
         # Choosing the already-selected item emits activated without changing
-        # the index; it must still leave all-channel comparison mode.
-        if self.multi_analysis_check.isChecked():
-            self._analysis_channel_selected()
+        # the index; it must also restore a channel hidden through its legend.
+        self._analysis_channel_selected()
 
     def _device_tab_clicked(self, index: int) -> None:
-        if self.multi_analysis_check.isChecked():
-            self._device_tab_selected(index)
+        self._device_tab_selected(index)
 
     def _device_tab_selected(self, index: int) -> None:
         if index < 0 or index >= len(self.CHANNELS):
@@ -1755,6 +1784,16 @@ class MainWindow(QtWidgets.QMainWindow):
             if panel.acquisition_mode == "precision"
             else int(panel.burst_count.value())
         )
+        runtime.sample_interval_s = (
+            config.sample_interval_s
+            if panel.acquisition_mode == "precision"
+            else panel.burst_interval_us.value() * 1e-6
+        )
+        self.trend_plot.restore_channel_visibility(channel)
+        if channel in self.analysis_channels:
+            # A new capture has a new time origin and may use a different
+            # physical unit. An old manual window must not hide its samples.
+            self._reset_trend_zoom()
         if panel.acquisition_mode == "precision":
             worker: PrecisionAcquisitionWorker | BurstAcquisitionWorker
             worker = PrecisionAcquisitionWorker(
@@ -1826,7 +1865,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 if runtime.target_samples is not None
                 else (" · CONTINUOUS" if self.language == "en" else " · 持续")
             )
+            + f" · Δt {runtime.sample_interval_s:g} s"
         )
+        self._update_sampling_hint(channel)
         readout["unit"].setText(config.function.unit)
         readout["value"].setText("—")
         readout["time"].setText(tr(self.language, "等待数据"))
@@ -3066,6 +3107,8 @@ class MainWindow(QtWidgets.QMainWindow):
             runtime.minimum = float(np.min(imported.values))
             runtime.maximum = float(np.max(imported.values))
             runtime.target_samples = None
+            runtime.sample_interval_s = None
+            self._update_sampling_hint(channel)
             readout = self.readouts[channel]
             readout["source"].setText(Path(path).name)
             readout["value"].setText(f"{imported.values[-1]:.11g}")
@@ -3367,6 +3410,8 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime.identity = None
         runtime.last_temperature = np.nan
         runtime.target_samples = None
+        runtime.sample_interval_s = None
+        self._update_sampling_hint(channel)
         runtime.minimum = np.inf
         runtime.maximum = -np.inf
         readout = self.readouts[channel]

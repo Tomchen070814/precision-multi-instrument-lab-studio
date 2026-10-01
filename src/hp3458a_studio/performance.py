@@ -34,14 +34,17 @@ def windowed_display_indices(
     x_max: float,
     max_points: int = 20_000,
 ) -> np.ndarray:
-    """Return a bounded, full-resolution selection for one visible time window."""
+    """Keep local detail and the neighbors needed to draw crossing segments."""
     if not timestamps:
         return np.asarray([], dtype=np.int64)
     lower, upper = sorted((float(x_min), float(x_max)))
-    start = bisect_left(timestamps, lower)
-    stop = bisect_right(timestamps, upper)
-    if stop <= start:
+    # A slow channel can have no sample inside a zoomed window even though its
+    # line crosses that window. Retain one point on each side for clipping.
+    # Windows entirely outside this session still have no data to display.
+    if upper < timestamps[0] or lower > timestamps[-1]:
         return np.asarray([], dtype=np.int64)
+    start = max(0, bisect_left(timestamps, lower) - 1)
+    stop = min(len(timestamps), bisect_right(timestamps, upper) + 1)
     local_indices = display_indices(stop - start, max_points)
     return local_indices + start
 

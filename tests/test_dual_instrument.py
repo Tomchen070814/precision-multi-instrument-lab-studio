@@ -467,7 +467,7 @@ def test_language_switch_updates_main_and_instrument_controls(app):
     assert window.panels["A"].resource_refresh.text() == "Scan"
     assert window.panels["A"].start_button.text() == "Start 3458A A"
     assert window.start_both_button.text() == "Synchronized start A+B"
-    assert window.export_diagnostic_button.text() == "Export diagnostic report"
+    assert window.export_diagnostic_button.text() == "Export diagnostics"
     assert "Multi-channel trend" in window.tabs.tabText(window.trend_tab_index)
 
     chinese_index = window.language_combo.findData("zh")

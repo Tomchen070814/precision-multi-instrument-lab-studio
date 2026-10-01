@@ -287,3 +287,143 @@ def test_markers_and_hover_clear_on_channel_axis_changes_but_survive_refresh(plo
     assert not plot.v_line.isVisible()
     assert not plot.h_line.isVisible()
     assert not plot.hover_label.isVisible()
+
+
+def test_first_sample_is_visible_as_a_point_before_a_line_can_be_drawn(plot, app):
+    x = np.asarray([1_700_000_000.0])
+    y = np.asarray([10_000.0])
+    plot.set_channel_data("A", x, y, unit="Ω", color="#ff007f", label="A")
+    app.processEvents()
+    assert plot.curve.isVisible()
+    assert plot.curve.scatter.isVisible()
+    assert len(plot.curve.scatter.points()) == 1
+    point = plot._viewboxes[0].mapViewToScene(QtCore.QPointF(x[0], y[0]))
+    assert plot._viewboxes[0].mapRectToScene(plot._viewboxes[0].rect()).contains(point)
+
+    plot.set_channel_data(
+        "A", np.r_[x, x + 21.1], np.r_[y, y + 1], unit="Ω", color="#ff007f", label="A"
+    )
+    app.processEvents()
+    assert not plot.curve.scatter.isVisible()
+    assert plot.curve.curve.isVisible()
+
+
+def test_shared_time_range_includes_independent_channels_and_empty_axes_do_not_reset_it(
+    plot, app
+):
+    start = 1_700_000_000.0
+    for channel, unit, offset in (("A", "V", 10), ("B", "Ω", -100), ("C", "A", 1000)):
+        plot.set_channel_data(
+            channel,
+            start + offset + np.arange(10),
+            np.arange(10),
+            unit=unit,
+            color="#ff007f",
+            label=channel,
+        )
+    app.processEvents()
+    for view in plot._viewboxes:
+        lower, upper = view.viewRange()[0]
+        assert lower <= start - 100
+        assert upper >= start + 1009
+    plot.reset_view()
+    app.processEvents()
+    assert plot._viewboxes[0].viewRange()[0][0] <= start - 100
+    assert plot._viewboxes[0].viewRange()[0][1] >= start + 1009
+
+    for channel in ("B", "C"):
+        plot.set_channel_data(
+            channel,
+            np.asarray([]),
+            np.asarray([]),
+            unit="V",
+            color="#ff007f",
+            label=channel,
+        )
+    plot.reset_view()
+    app.processEvents()
+    lower, upper = plot._viewboxes[0].viewRange()[0]
+    assert start < lower <= start + 10
+    assert start + 19 <= upper < start + 100
+
+
+def test_live_time_union_preserves_manual_zoom_until_explicit_reset(plot, app):
+    x = _populate_mixed(plot, app)
+    plot.zoom_x(0.5)
+    manual_range = plot._viewboxes[0].viewRange()[0][:]
+    plot.set_channel_data(
+        "B", x + 5000, np.ones(x.size), unit="Ω", color="#ff007f", label="B"
+    )
+    app.processEvents()
+    np.testing.assert_allclose(plot._viewboxes[0].viewRange()[0], manual_range, atol=0)
+    plot.reset_view()
+    app.processEvents()
+    assert plot._viewboxes[0].viewRange()[0][1] >= x[-1] + 5000
+
+
+class _LegendClick:
+    def button(self):
+        return QtCore.Qt.MouseButton.LeftButton
+
+    def accept(self):
+        pass
+
+
+def test_legend_hiding_survives_refresh_and_can_be_restored_explicitly(plot, app):
+    x = _populate_mixed(plot, app)
+    sample = next(
+        sample for sample, _label in plot.legend.items if sample.item is plot.curve
+    )
+    sample.mouseClickEvent(_LegendClick())
+    assert not plot.curve.isVisible()
+    assert "V" not in plot.available_units
+    plot.set_channel_data(
+        "A", x, np.ones(x.size), unit="V", color="#ff007f", label="A new run"
+    )
+    app.processEvents()
+    assert not plot.curve.isVisible()
+    plot.restore_channel_visibility("A")
+    app.processEvents()
+    assert plot.curve.isVisible()
+    assert "V" in plot.available_units
+    sample = next(
+        sample for sample, _label in plot.legend.items if sample.item is plot.curve
+    )
+    sample.mouseClickEvent(_LegendClick())
+    assert not plot.curve.isVisible()
+
+
+def test_empty_legend_click_does_not_hide_future_samples(plot, app):
+    sample = next(
+        sample for sample, _label in plot.legend.items if sample.item is plot.curve
+    )
+    sample.mouseClickEvent(_LegendClick())
+    plot.set_data(np.asarray([1_700_000_000.0]), np.asarray([10.0]))
+    app.processEvents()
+    assert plot.curve.isVisible()
+    assert plot.curve.scatter.isVisible()
+
+
+def test_hidden_channel_average_does_not_pollute_other_unit_axis_after_refresh(
+    plot, app
+):
+    x = _populate_mixed(plot, app)
+    y = plot._channel_data["A"][1]
+    plot.set_smooth_data("A", x, y)
+    assert plot.smooth_curve.isVisible()
+    sample = next(
+        sample for sample, _label in plot.legend.items if sample.item is plot.curve
+    )
+    sample.mouseClickEvent(_LegendClick())
+    assert not plot.smooth_curve.isVisible()
+    assert plot.axis_assignments["B"] == 0
+    plot.set_smooth_data("A", x, y)
+    app.processEvents()
+    assert not plot.smooth_curve.isVisible()
+    lower, upper = plot._viewboxes[0].viewRange()[1]
+    assert lower < -9e11
+    assert upper > 9e11
+    plot.restore_channel_visibility("A")
+    app.processEvents()
+    assert plot.smooth_curve.isVisible()
+    assert plot.smooth_curve.getViewBox() is plot._viewboxes[plot.axis_assignments["A"]]

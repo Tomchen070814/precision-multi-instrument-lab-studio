@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .drivers import RANGES, AcquisitionConfig, MeasurementFunction
 from .i18n import function_name, tr
@@ -25,6 +25,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self._stoppable = True
         self._field_labels: list[tuple[QtWidgets.QLabel, str]] = []
         self._build_ui()
+        self._protect_wheel_edits()
         self._connect_signals()
         self._driver_changed()
         self._mode_changed()
@@ -142,6 +143,44 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         self.precision_length_combo.currentIndexChanged.connect(
             self._precision_length_changed
         )
+
+    def _protect_wheel_edits(self) -> None:
+        for control in (
+            *self.findChildren(QtWidgets.QComboBox),
+            *self.findChildren(QtWidgets.QAbstractSpinBox),
+        ):
+            control.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            control.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QtCore.QEvent.Type.Wheel and isinstance(
+            watched, (QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)
+        ):
+            # Instrument settings require an explicit click, key, or edit.
+            # A wheel gesture over this scrollable panel must only scroll it.
+            event.ignore()
+            parent = watched.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QtWidgets.QAbstractScrollArea):
+                    viewport = parent.viewport()
+                    forwarded = QtGui.QWheelEvent(
+                        QtCore.QPointF(
+                            viewport.mapFromGlobal(event.globalPosition().toPoint())
+                        ),
+                        event.globalPosition(),
+                        event.pixelDelta(),
+                        event.angleDelta(),
+                        event.buttons(),
+                        event.modifiers(),
+                        event.phase(),
+                        event.inverted(),
+                    )
+                    QtWidgets.QApplication.sendEvent(viewport, forwarded)
+                    event.setAccepted(forwarded.isAccepted())
+                    break
+                parent = parent.parentWidget()
+            return True
+        return super().eventFilter(watched, event)
 
     def _field(self, title: str, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
@@ -408,6 +447,11 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         )
         self.precision_length_combo.setItemText(
             1, tr(self.language, "固定点数，完成后自动停止")
+        )
+        self.interval_spin.setToolTip(
+            "Edit with the keyboard or arrow buttons; the wheel scrolls the panel."
+            if self.language == "en"
+            else "用键盘或上下箭头修改；滚轮只滚动面板。"
         )
         for label, key in self._field_labels:
             label.setText(tr(self.language, key))

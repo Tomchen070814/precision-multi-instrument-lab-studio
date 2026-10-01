@@ -295,6 +295,10 @@ def test_inspector_scrolls_without_compressing_parameter_cards(window, size, lan
     window.identity_model.setText("Keysight Technologies 34470A")
     window.identity_resource.setText("TCPIP0::192.168.100.123::inst0::INSTR")
     window.identity_fw.setText("A.03.03-03.15-03.03-00.52-04-03")
+    window.autosave_path_label.setText(
+        "C:/Users/Windows-Measurement-Operator/AppData/Local/"
+        "Precision Multi-Instrument Lab Studio/autosave/2026-10-01"
+    )
     window.resize(*size)
     window.show()
     QtTest.QTest.qWait(50)
@@ -307,6 +311,7 @@ def test_inspector_scrolls_without_compressing_parameter_cards(window, size, lan
     assert scroll.verticalScrollBar().isVisible()
     assert scroll.widget().height() > scroll.viewport().height()
     assert scroll.minimumWidth() == 260
+    assert scroll.widget().width() <= scroll.viewport().width()
 
     for field in (window.session_count, window.identity_model, window.autosave_status):
         card = field.parentWidget()
@@ -329,3 +334,118 @@ def test_inspector_scrolls_without_compressing_parameter_cards(window, size, lan
     button_bounds = QtCore.QRect(position, window.open_autosave_button.size())
     assert scroll.viewport().rect().contains(button_bounds)
     assert "automatically" not in window.box_zoom_button.toolTip()
+
+
+@pytest.mark.parametrize(
+    ("function", "unit"),
+    [(MeasurementFunction.RESISTANCE_4W, "Ω"), (MeasurementFunction.AC_VOLTAGE, "V")],
+)
+def test_restart_selected_channel_after_function_change_resets_old_zoom(
+    window, function, unit
+):
+    window.channel_c_enabled.setChecked(True)
+    window.sync_channel_checks["C"].setChecked(True)
+    for panel in window.panels.values():
+        panel.interval_spin.setValue(0.02)
+    window.show()
+    window._start_both()
+    assert _wait_until(
+        lambda: all(len(c.session) >= 4 for c in window.channels.values())
+    )
+    window._analysis_channel_activated()
+    window._stop_channel("A")
+    assert _wait_until(lambda: not window.channels["A"].running)
+    peers = {key: window.channels[key].worker for key in ("B", "C")}
+    peer_counts = {key: len(window.channels[key].session) for key in peers}
+    old_latest = float(window.channels["A"].session.timestamps[-1])
+    window.trend_plot.zoom_x(0.5)
+    window.trend_plot.getViewBox().setXRange(old_latest - 10, old_latest - 5, padding=0)
+    assert window._trend_x_window is not None
+    curve = window.trend_plot._curves["A"]
+    curve.setVisible(False)
+    window.trend_plot._legend_visibility_changed("A", curve)
+    assert "A" in window.trend_plot._legend_hidden
+    panel = window.panels["A"]
+    panel.function_combo.setCurrentIndex(panel.function_combo.findData(function.value))
+
+    window._toggle_channel("A")
+
+    assert window._trend_x_window is None
+    assert _wait_until(lambda: len(window.channels["A"].session) >= 4)
+    window._refresh_views()
+    assert window.channels["A"].session.unit == unit
+    assert window.session_unit.text() == unit
+    assert window.trend_plot.available_units == (unit,)
+    assert window.trend_plot._channel_data["A"][1].size >= 4
+    assert window.trend_plot._curves["A"].isVisible()
+    assert "A" not in window.trend_plot._legend_hidden
+    assert "Δt 0.02 s" in window.readouts["A"]["mode"].text()
+    assert function.command in window.metric_basis_label.text()
+    for key, worker in peers.items():
+        assert window.channels[key].worker is worker
+        assert len(window.channels[key].session) > peer_counts[key]
+        assert window.trend_plot._channel_data[key][1].size == 0
+        assert not window.trend_plot._curves[key].isVisible()
+    assert _wait_until(
+        lambda: (
+            window.trend_plot.getViewBox().viewRange()[0][0]
+            > max(float(window.channels[key].session.timestamps[0]) for key in peers)
+        )
+    )
+
+
+def test_long_sampling_interval_keeps_first_sample_and_explains_wait(window):
+    window._analysis_channel_activated()
+    window.panels["A"].interval_spin.setValue(21.1)
+    window._toggle_channel("A")
+    assert _wait_until(lambda: len(window.channels["A"].session) == 1)
+    QtTest.QTest.qWait(100)
+    assert window.channels["A"].running
+    assert len(window.channels["A"].session) == 1
+    assert window.trend_plot._channel_data["A"][1].size == 1
+    assert window.trend_plot._curves["A"].isVisible()
+    assert window.trend_plot._curves["A"].opts["symbol"] is not None
+    assert "Δt 21.1 s" in window.readouts["A"]["mode"].text()
+    assert "设定采样间隔：21.1 秒" in window.readouts["A"]["time"].toolTip()
+    window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+    assert (
+        "Requested sampling interval: 21.1 s" in window.readouts["A"]["time"].toolTip()
+    )
+    window._stop_channel("A")
+    assert _wait_until(lambda: not window.channels["A"].running, timeout_ms=2000)
+
+
+def test_starting_hidden_channel_preserves_selected_channel_zoom(window):
+    window.channels["A"].session.replace(
+        np.arange(20) * 0.1, np.linspace(1.0, 2.0, 20), "V", "test"
+    )
+    window._analysis_channel_activated()
+    window.trend_plot.zoom_x(0.5)
+    saved_window = window._trend_x_window
+    assert saved_window is not None
+    window.panels["B"].interval_spin.setValue(0.02)
+    window._toggle_channel("B")
+    assert _wait_until(lambda: len(window.channels["B"].session) >= 2)
+    assert window._trend_x_window == saved_window
+    assert window.analysis_channels == ("A",)
+    assert window.trend_plot._channel_data["A"][1].size > 0
+    assert window.trend_plot._channel_data["B"][1].size == 0
+
+
+@pytest.mark.parametrize("selector", ["dropdown", "tab"])
+def test_reselect_current_instrument_restores_legend_hidden_curve(window, selector):
+    window.channels["A"].session.replace(
+        np.arange(20) * 0.1, np.linspace(1.0, 2.0, 20), "V", "test"
+    )
+    window._analysis_channel_activated()
+    curve = window.trend_plot._curves["A"]
+    curve.setVisible(False)
+    window.trend_plot._legend_visibility_changed("A", curve)
+    window._refresh_views()
+    assert not curve.isVisible()
+    if selector == "dropdown":
+        window.analysis_channel_combo.activated.emit(0)
+    else:
+        window.device_tabs.tabBarClicked.emit(0)
+    assert curve.isVisible()
+    assert "A" not in window.trend_plot._legend_hidden

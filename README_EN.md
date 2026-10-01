@@ -22,6 +22,10 @@ automatically.
 
 Current release: **v0.5.3**. See [release notes](RELEASE_NOTES_v0.5.3.md) for
 individual instrument selection, plot zoom/clipping, and acquisition fixes.
+Restarting one instrument after a function change restores its new time range;
+slow captures show their first point and requested interval. Scrolling the
+settings panel cannot accidentally change acquisition parameters. The plotting
+dependency requires pyqtgraph 0.14 or later.
 The v0.5.2 release built on the 14-model architecture in
 v0.5.1 with connection self-tests, layered driver/GPIB diagnostics, mandatory
 data-source identification, real-time memory monitoring, and long-session
