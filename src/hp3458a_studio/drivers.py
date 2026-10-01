@@ -223,7 +223,7 @@ class SimulatorDriver(InstrumentDriver):
 
     def connect(self) -> InstrumentIdentity:
         self.connected = True
-        self.started_at = time.monotonic()
+        self.started_at = time.perf_counter()
         model = (
             "HEWLETT-PACKARD,3458A (SIMULATOR)"
             if self.instrument_model is InstrumentModel.KEYSIGHT_3458A
@@ -269,7 +269,7 @@ class SimulatorDriver(InstrumentDriver):
     def read_single(self, include_temperature: bool = False) -> Measurement:
         if not self.connected:
             raise InstrumentError("演示仪表尚未连接")
-        elapsed = time.monotonic() - self.started_at
+        elapsed = time.perf_counter() - self.started_at
         base = self._base_value()
         scale = abs(base) if base else 1.0
         nplc_noise = max(0.08, 1.0 / math.sqrt(max(self.config.nplc, 1e-4)))
@@ -494,7 +494,7 @@ class Keysight3458ADriver(InstrumentDriver):
                 line_frequency_hz=line_frequency,
             )
             self.connected = True
-            self.started_at = time.monotonic()
+            self.started_at = time.perf_counter()
             logger.info(
                 "Instrument connected | resource=%s | model=%s",
                 self.resource_name,
@@ -595,7 +595,7 @@ class Keysight3458ADriver(InstrumentDriver):
                 raise InstrumentError("3458A 未返回有效读数")
             temperature = self.read_temperature() if include_temperature else None
             return Measurement(
-                elapsed_s=time.monotonic() - self.started_at,
+                elapsed_s=time.perf_counter() - self.started_at,
                 value=float(values[0]),
                 unit=self.config.function.unit,
                 timestamp=datetime.now(timezone.utc),
@@ -656,8 +656,8 @@ class Keysight3458ADriver(InstrumentDriver):
             available_values = parse_ascii_values(self._query("MCOUNT?"))
             available = int(available_values[0]) if available_values.size else 0
             if available < count:
-                deadline = time.monotonic() + max(10.0, count * interval_s + 2.0)
-                while available < count and time.monotonic() < deadline:
+                deadline = time.perf_counter() + max(10.0, count * interval_s + 2.0)
+                while available < count and time.perf_counter() < deadline:
                     time.sleep(0.05)
                     available_values = parse_ascii_values(self._query("MCOUNT?"))
                     available = int(available_values[0]) if available_values.size else 0
@@ -976,7 +976,7 @@ class ScpiDmmDriver(InstrumentDriver):
                 line_frequency_hz=line_frequency,
             )
             self.connected = True
-            self.started_at = time.monotonic()
+            self.started_at = time.perf_counter()
             logger.info(
                 "Instrument connected | profile=%s | resource=%s | idn=%s",
                 self.instrument_model.value,
@@ -1126,7 +1126,7 @@ class ScpiDmmDriver(InstrumentDriver):
             if temperature_values.size:
                 temperature = float(temperature_values[0])
         return Measurement(
-            elapsed_s=time.monotonic() - self.started_at,
+            elapsed_s=time.perf_counter() - self.started_at,
             value=float(values[0]),
             unit=self.config.function.unit,
             timestamp=datetime.now(timezone.utc),
@@ -1257,7 +1257,7 @@ class Fluke8508ADriver(InstrumentDriver):
                 line_frequency_hz=50.0,
             )
             self.connected = True
-            self.started_at = time.monotonic()
+            self.started_at = time.perf_counter()
             logger.info(
                 "Instrument connected | profile=fluke_8508a | resource=%s | idn=%s",
                 self.resource_name,
@@ -1380,7 +1380,7 @@ class Fluke8508ADriver(InstrumentDriver):
         if not values.size:
             raise InstrumentError("Fluke 8508A 未返回有效读数")
         return Measurement(
-            elapsed_s=time.monotonic() - self.started_at,
+            elapsed_s=time.perf_counter() - self.started_at,
             value=float(values[0]),
             unit=self.config.function.unit,
             timestamp=datetime.now(timezone.utc),

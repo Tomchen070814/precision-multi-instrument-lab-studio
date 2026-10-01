@@ -224,6 +224,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.language = "zh"
         self._static_text_widgets: list[tuple[QtWidgets.QWidget, str]] = []
         self._inspector_control_texts: dict[QtWidgets.QWidget, str] = {}
+        self._inspector_control_fit_state: dict[
+            QtWidgets.QWidget, tuple[tuple, str, str, str]
+        ] = {}
         self._inspector_fit_pending = False
         self._inspector_layout_signature: tuple | None = None
         self._inspector_spin_font_px: dict[QtWidgets.QAbstractSpinBox, int] = {}
@@ -1650,7 +1653,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 label.setMinimumHeight(label.heightForWidth(label.width()))
 
     @staticmethod
-    def _wrap_control_text(text: str, metrics: QtGui.QFontMetrics, width: int) -> str:
+    def _wrap_control_text(
+        text: str,
+        metrics: QtGui.QFontMetrics,
+        width: int,
+        *,
+        break_long_words: bool = True,
+    ) -> str:
         lines: list[str] = []
         current = ""
         for word in text.split():
@@ -1661,6 +1670,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if current:
                 lines.append(current)
                 current = ""
+            if not break_long_words:
+                current = word
+                continue
             for character in word:
                 candidate = current + character
                 if current and metrics.horizontalAdvance(candidate) > width:
@@ -1679,30 +1691,72 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         content_width = max(80, scroll.viewport().width() - 28)
         for control, text in self._inspector_control_texts.items():
-            control.ensurePolished()
             available_width = content_width
             if control is self.open_autosave_button:
                 available_width -= 26
-            metrics = control.fontMetrics()
-            line_width = max(
-                (
-                    metrics.horizontalAdvance(line)
-                    for line in control.text().splitlines()
-                ),
-                default=0,
+            inherited_styles = []
+            ancestor = control.parentWidget()
+            while ancestor is not None:
+                inherited_styles.append(ancestor.styleSheet())
+                ancestor = ancestor.parentWidget()
+            context = (
+                available_width,
+                text,
+                QtWidgets.QApplication.style().objectName(),
+                QtWidgets.QApplication.font().key(),
+                control.parentWidget().font().key(),
+                tuple(inherited_styles),
+                control.logicalDpiX(),
+                control.logicalDpiY(),
             )
-            inset = max(26, control.sizeHint().width() - line_width)
-            wrap_width = max(40, available_width - inset)
-            # Native styles add different text/indicator margins. Verify the
-            # resulting native minimum instead of assuming one platform's gap.
-            for _attempt in range(5):
-                wrapped = self._wrap_control_text(text, metrics, wrap_width)
-                if control.text() != wrapped:
-                    control.setText(wrapped)
-                overflow = control.minimumSizeHint().width() - available_width
-                if overflow <= 0:
+            previous = self._inspector_control_fit_state.get(control)
+            own_style = control.styleSheet()
+            if previous is not None and own_style == previous[2]:
+                if context == previous[0] and control.text() == previous[3]:
+                    continue
+                own_style = previous[1]
+                if control.styleSheet() != own_style:
+                    control.setStyleSheet(own_style)
+            control.ensurePolished()
+            font_px = max(1, QtGui.QFontInfo(control.font()).pixelSize())
+            # English words stay intact. A native style can report a larger
+            # minimum than the text metrics predict; reduce the requested font
+            # only when wrapping complete words still cannot fit that minimum.
+            while True:
+                metrics = control.fontMetrics()
+                line_width = max(
+                    (
+                        metrics.horizontalAdvance(line)
+                        for line in control.text().splitlines()
+                    ),
+                    default=0,
+                )
+                inset = max(26, control.sizeHint().width() - line_width)
+                wrap_width = max(1, available_width - inset)
+                for _attempt in range(5):
+                    wrapped = self._wrap_control_text(
+                        text,
+                        metrics,
+                        wrap_width,
+                        break_long_words=not text.isascii(),
+                    )
+                    if control.text() != wrapped:
+                        control.setText(wrapped)
+                    overflow = control.minimumSizeHint().width() - available_width
+                    if overflow <= 0:
+                        break
+                    wrap_width = max(1, wrap_width - overflow - 2)
+                if overflow <= 0 or font_px == 1:
                     break
-                wrap_width = max(1, wrap_width - overflow - 2)
+                font_px -= 1
+                control.setStyleSheet(f"{own_style}\nfont-size: {font_px}px;")
+                control.ensurePolished()
+            self._inspector_control_fit_state[control] = (
+                context,
+                own_style,
+                control.styleSheet(),
+                control.text(),
+            )
         inspector = scroll.widget()
         for spin in (self.rolling_spin, self.sigma_spin):
             edit = spin.lineEdit()

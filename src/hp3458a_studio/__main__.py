@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -89,8 +90,8 @@ def _claim_single_instance(
 
 
 def main() -> int:
+    smoke_path = None
     try:
-        smoke_path = None
         if "--smoke-test" in sys.argv:
             smoke_index = sys.argv.index("--smoke-test")
             smoke_path = Path(sys.argv[smoke_index + 1]).resolve()
@@ -103,11 +104,24 @@ def main() -> int:
         app.setApplicationVersion(__version__)
         app.setOrganizationName("Louis Lab")
         app.setStyle("Fusion")
-        data_directory = Path(
-            QtCore.QStandardPaths.writableLocation(
-                QtCore.QStandardPaths.StandardLocation.AppLocalDataLocation
+        smoke_directory = None
+        if smoke_path:
+            smoke_directory = QtCore.QTemporaryDir()
+            if not smoke_directory.isValid():
+                raise OSError("Unable to create isolated smoke-test state directory")
+            isolated_root = Path(smoke_directory.path())
+            isolated_settings = QtCore.QSettings(
+                str(isolated_root / "settings.ini"), QtCore.QSettings.Format.IniFormat
             )
-        )
+            MainWindow._create_settings = staticmethod(lambda: isolated_settings)
+            os.environ["LOCALAPPDATA"] = str(isolated_root)
+            data_directory = isolated_root / "logs"
+        else:
+            data_directory = Path(
+                QtCore.QStandardPaths.writableLocation(
+                    QtCore.QStandardPaths.StandardLocation.AppLocalDataLocation
+                )
+            )
         configure_logging(data_directory)
         _install_exception_hook()
         logging.getLogger("hp3458a_studio").info(
@@ -126,15 +140,6 @@ def main() -> int:
 
         font = QtGui.QFont("Segoe UI", 10)
         app.setFont(font)
-        smoke_directory = None
-        if smoke_path:
-            smoke_directory = QtCore.QTemporaryDir()
-            isolated_settings = QtCore.QSettings(
-                str(Path(smoke_directory.path()) / "settings.ini"),
-                QtCore.QSettings.Format.IniFormat,
-            )
-            MainWindow._create_settings = staticmethod(lambda: isolated_settings)
-            os.environ["LOCALAPPDATA"] = smoke_directory.path()
         window = MainWindow()
 
         def activate_window() -> None:
@@ -170,12 +175,37 @@ def main() -> int:
         logging.getLogger("hp3458a_studio").info(
             "Application exit | code=%s", exit_code
         )
+        if smoke_directory is not None:
+            logging.shutdown()
+            smoke_directory.remove()
         return exit_code
     except Exception as exc:
         details = "".join(traceback_module.format_exception(exc))
         logging.getLogger("hp3458a_studio").critical(
             "Fatal application startup error", exc_info=True
         )
+        if smoke_path is not None:
+            try:
+                smoke_path.parent.mkdir(parents=True, exist_ok=True)
+                smoke_path.write_text(
+                    json.dumps(
+                        {
+                            "version": __version__,
+                            "result": "failed",
+                            "failure_reasons": [
+                                f"Startup failed: {type(exc).__name__}: {exc}"
+                            ],
+                            "shutdown_complete": False,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                logging.getLogger("hp3458a_studio").exception(
+                    "Smoke failure report unavailable"
+                )
+            return 1
         _show_fatal_startup_error(
             "The application could not start. The error was saved to "
             "application.log.\n\n"

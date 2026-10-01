@@ -48,7 +48,7 @@ class _ScriptedDriver(InstrumentDriver):
             if isinstance(effect, Exception):
                 raise effect
         self.connected = True
-        self.started_at = time.monotonic()
+        self.started_at = time.perf_counter()
         return InstrumentIdentity("3458A", self.resource_name)
 
     def configure(self, config):
@@ -61,7 +61,7 @@ class _ScriptedDriver(InstrumentDriver):
             raise effect
         if isinstance(effect, Measurement):
             return effect
-        return Measurement(time.monotonic() - self.started_at, effect, "V")
+        return Measurement(time.perf_counter() - self.started_at, effect, "V")
 
     def cancel_pending_io(self):
         self.cancel_calls += 1

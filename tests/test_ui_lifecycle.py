@@ -447,6 +447,50 @@ def test_narrow_english_inspector_wraps_controls_with_larger_fonts(
         app.setStyle(QtWidgets.QStyleFactory.create(previous_style))
 
 
+def test_english_inspector_preserves_words_when_native_font_requires_fitting(window):
+    window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+    scroll = window.inspector_scroll
+    scroll.setMaximumWidth(260)
+    control = window.allan_normalized
+    requested_style = "font-size: 48px; font-family: 'Courier New';"
+    control.setStyleSheet(requested_style)
+    window.resize(1180, 720)
+    window.show()
+    QtTest.QTest.qWait(100)
+    window._fit_inspector_controls()
+    QtWidgets.QApplication.processEvents()
+
+    canonical_text = "Normalize Allan to ppm"
+    assert window._inspector_control_texts[control] == canonical_text
+    assert " ".join(control.text().split()) == canonical_text
+    assert "Normalize" in control.text().splitlines()
+    assert QtGui.QFontInfo(control.font()).pixelSize() < 48
+    assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+    assert all(
+        control.fontMetrics().horizontalAdvance(line) <= control.width() - 26
+        for line in control.text().splitlines()
+    )
+    fitted_font_px = QtGui.QFontInfo(control.font()).pixelSize()
+    window._fit_inspector_controls()
+    assert QtGui.QFontInfo(control.font()).pixelSize() == fitted_font_px
+    window._retranslate_ui()
+    assert " ".join(control.text().split()) == canonical_text
+    assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+
+    # Fitting is responsive: once the complete words fit at the requested size,
+    # widening the inspector restores that size without changing its text.
+    control.setStyleSheet(requested_style)
+    control.ensurePolished()
+    wide_width = max(360, control.minimumSizeHint().width() + 38)
+    scroll.setMaximumWidth(wide_width)
+    scroll.setMinimumWidth(wide_width)
+    QtTest.QTest.qWait(100)
+    assert QtGui.QFontInfo(control.font()).pixelSize() == 48
+    assert control.styleSheet() == requested_style
+    assert " ".join(control.text().split()) == canonical_text
+    assert control.minimumSizeHint().width() <= scroll.viewport().width() - 28
+
+
 def test_language_change_preserves_live_sources_and_stopped_temperature(window):
     window.channel_c_enabled.setChecked(True)
     window.sync_channel_checks["C"].setChecked(True)

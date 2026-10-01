@@ -204,12 +204,15 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                         return
             # Elapsed time begins at the acquisition release point, not while
             # VISA connection/configuration is still in progress.
-            self._capture_started_at = time.monotonic()
+            # Python 3.11's Windows monotonic clock can tick only every ~15 ms.
+            # The sample schedule and every driver elapsed time share QPC's
+            # high-resolution perf_counter origin instead.
+            self._capture_started_at = time.perf_counter()
             self.driver.started_at = self._capture_started_at
-            next_sample = time.monotonic()
+            next_sample = time.perf_counter()
             next_temperature = 0.0
             while not self._stop_event.is_set():
-                now = time.monotonic()
+                now = time.perf_counter()
                 include_temperature = now >= next_temperature
                 try:
                     reading = self.driver.read_single(
@@ -218,19 +221,19 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                 except Exception as exc:  # noqa: BLE001 - only transport errors retry
                     if not self._recover(exc):
                         return
-                    next_sample = time.monotonic()
+                    next_sample = time.perf_counter()
                     next_temperature = 0.0
                     continue
                 if self._stop_event.is_set():
                     return
                 _validate_reading(reading)
-                reading.elapsed_s = time.monotonic() - self._capture_started_at
+                reading.elapsed_s = time.perf_counter() - self._capture_started_at
                 self._consecutive_reconnects = 0
                 if self._recovery_pending:
                     self._recovery_pending = False
                     self.recovered.emit()
                 if include_temperature:
-                    next_temperature = time.monotonic() + self.temperature_interval_s
+                    next_temperature = time.perf_counter() + self.temperature_interval_s
                 self.measurement_ready.emit(reading)
                 self.samples_acquired += 1
                 if (
@@ -240,11 +243,11 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                     self.completed_target = True
                     break
                 next_sample += self.config.sample_interval_s
-                remaining = next_sample - time.monotonic()
+                remaining = next_sample - time.perf_counter()
                 if remaining > 0:
                     self._stop_event.wait(remaining)
                 else:
-                    next_sample = time.monotonic()
+                    next_sample = time.perf_counter()
         except ConnectionPreflightError as exc:
             logger.error(
                 "Connection preflight blocked acquisition | code=%s | resource=%s",
