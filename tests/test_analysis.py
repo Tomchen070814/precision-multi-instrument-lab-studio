@@ -38,6 +38,15 @@ def test_allan_constant_signal_is_zero():
     assert np.allclose(deviation, 0.0)
 
 
+def test_allan_small_noise_is_not_distorted_by_large_dc_offset():
+    rng = np.random.default_rng(42)
+    values = 1e8 + rng.normal(0.0, 1e-6, 20_000)
+    tau, deviation = allan_deviation(values, 0.1)
+    reference_tau, reference = allan_deviation(values - values[0], 0.1)
+    np.testing.assert_array_equal(tau, reference_tau)
+    np.testing.assert_allclose(deviation, reference, rtol=1e-10, atol=1e-18)
+
+
 def test_linear_fit():
     x = np.linspace(0, 20, 100)
     y = 10 + 2e-6 * x

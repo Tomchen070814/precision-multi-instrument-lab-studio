@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from array import array
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 
 import numpy as np
@@ -251,7 +251,7 @@ class SessionData:
     def clear(self) -> None:
         self.elapsed_s.clear()
         self.values.clear()
-        self.timestamps.clear()
+        del self.timestamps[:]
         self.temperatures_c.clear()
 
     def replace(
@@ -260,31 +260,49 @@ class SessionData:
         values: np.ndarray,
         unit: str = "V",
         source: str = "CSV",
+        *,
+        timestamps: np.ndarray | None = None,
+        temperatures_c: np.ndarray | None = None,
     ) -> None:
-        self.elapsed_s = np.asarray(elapsed_s, dtype=float).tolist()
-        self.values = np.asarray(values, dtype=float).tolist()
-        original_times = np.asarray(self.elapsed_s, dtype=float)
-        if original_times.size and original_times[0] > 1_000_000_000:
-            self.timestamps = array("d", (float(t) for t in original_times))
+        original_times = np.asarray(elapsed_s, dtype=float)
+        readings = np.asarray(values, dtype=float)
+        if original_times.ndim != 1 or readings.ndim != 1:
+            raise ValueError("elapsed_s and values must be one-dimensional")
+        if original_times.size != readings.size:
+            raise ValueError("elapsed_s and values must have the same length")
+        if not np.all(np.isfinite(original_times)):
+            raise ValueError("elapsed_s must contain finite times")
+        temperature_values = (
+            np.full(readings.size, np.nan)
+            if temperatures_c is None
+            else np.asarray(temperatures_c, dtype=float)
+        )
+        if temperature_values.ndim != 1 or temperature_values.size != readings.size:
+            raise ValueError("temperatures_c and values must have the same length")
+        if timestamps is not None:
+            timestamp_values = np.asarray(timestamps, dtype=float)
+            if timestamp_values.ndim != 1 or timestamp_values.size != readings.size:
+                raise ValueError("timestamps and values must have the same length")
+            if not np.all(np.isfinite(timestamp_values)):
+                raise ValueError("timestamps must contain finite times")
+        elif original_times.size and original_times[0] > 1_000_000_000:
+            timestamp_values = original_times
         else:
-            start = datetime.now(timezone.utc)
-            self.timestamps = array(
-                "d",
-                (
-                    (
-                        start + timedelta(seconds=float(t - original_times[0]))
-                    ).timestamp()
-                    for t in original_times
-                )
+            timestamp_values = (
+                datetime.now(timezone.utc).timestamp()
+                + (original_times - original_times[0])
                 if original_times.size
-                else (),
+                else original_times
             )
-        if self.elapsed_s:
-            first = self.elapsed_s[0]
-            self.elapsed_s = [float(t - first) for t in self.elapsed_s]
+        # Validate all supplied fields before replacing an existing capture.
+        self.elapsed_s = (
+            (original_times - original_times[0]).tolist() if original_times.size else []
+        )
+        self.values = readings.tolist()
+        self.timestamps = array("d", timestamp_values)
         self.unit = unit
         self.source = source
-        self.temperatures_c = [np.nan] * len(self.values)
+        self.temperatures_c = temperature_values.tolist()
 
     @property
     def x(self) -> np.ndarray:

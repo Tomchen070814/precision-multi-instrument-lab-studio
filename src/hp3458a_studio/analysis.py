@@ -121,6 +121,9 @@ def allan_deviation(
         mean = np.mean(y)
         if mean != 0:
             y = y / mean
+    # Adjacent cluster differences are invariant to a constant offset. Remove
+    # it before accumulating so the DC level cannot drown out small noise.
+    y = y - y[0]
     max_m = max(1, y.size // 3)
     clusters = np.unique(
         np.maximum(

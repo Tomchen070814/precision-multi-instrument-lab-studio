@@ -37,7 +37,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
 
         self.model_combo = QtWidgets.QComboBox()
         for model in InstrumentModel:
-            self.model_combo.addItem(model.display_name, model)
+            self.model_combo.addItem(model.display_name, model.value)
         outer.addWidget(self._field("仪表型号", self.model_combo))
 
         self.driver_combo = QtWidgets.QComboBox()
@@ -241,7 +241,7 @@ class InstrumentControlPanel(QtWidgets.QWidget):
         )
         for function in functions:
             self.function_combo.addItem(
-                function_name(self.language, function), function
+                function_name(self.language, function), function.value
             )
         if current in functions:
             self.function_combo.setCurrentIndex(functions.index(current))
@@ -260,11 +260,10 @@ class InstrumentControlPanel(QtWidgets.QWidget):
 
     def current_function(self) -> MeasurementFunction:
         data = self.function_combo.currentData()
-        return (
-            data
-            if isinstance(data, MeasurementFunction)
-            else MeasurementFunction.DC_VOLTAGE
-        )
+        try:
+            return MeasurementFunction(data)
+        except (TypeError, ValueError):
+            return MeasurementFunction.DC_VOLTAGE
 
     def read_config(self) -> AcquisitionConfig:
         try:
@@ -312,11 +311,10 @@ class InstrumentControlPanel(QtWidgets.QWidget):
     @property
     def instrument_model(self) -> InstrumentModel:
         data = self.model_combo.currentData()
-        return (
-            data
-            if isinstance(data, InstrumentModel)
-            else InstrumentModel.KEYSIGHT_3458A
-        )
+        try:
+            return InstrumentModel(data)
+        except (TypeError, ValueError):
+            return InstrumentModel.KEYSIGHT_3458A
 
     @property
     def instrument_name(self) -> str:

@@ -94,6 +94,8 @@ class DurableSessionWriter:
         self.metadata_path = day_folder / f"{stem}.json"
         self._lock = threading.RLock()
         self._closed = False
+        self._data_finalized = False
+        self._finalized = False
         self._count = 0
         self._handle = self.partial_path.open(
             "x",
@@ -101,8 +103,12 @@ class DurableSessionWriter:
             encoding="utf-8",
         )
         self._writer = csv.writer(self._handle)
-        self._writer.writerow(self.HEADER)
-        self._sync()
+        try:
+            self._writer.writerow(self.HEADER)
+            self._sync()
+        except Exception:
+            self._handle.close()
+            raise
 
     @property
     def count(self) -> int:
@@ -110,7 +116,7 @@ class DurableSessionWriter:
 
     @property
     def path(self) -> Path:
-        return self.final_path if self._closed else self.partial_path
+        return self.final_path if self._data_finalized else self.partial_path
 
     def _sync(self) -> None:
         self._handle.flush()
@@ -167,12 +173,15 @@ class DurableSessionWriter:
 
     def finalize(self, status: str, error: str = "") -> Path:
         with self._lock:
-            if self._closed:
+            if self._finalized:
                 return self.final_path
-            self._sync()
-            self._handle.close()
-            self._closed = True
-            self.partial_path.replace(self.final_path)
+            if not self._closed:
+                self._sync()
+                self._handle.close()
+                self._closed = True
+            if not self._data_finalized:
+                self.partial_path.replace(self.final_path)
+                self._data_finalized = True
             metadata = {
                 "run_id": self.run_id,
                 "channel": self.channel,
@@ -194,6 +203,7 @@ class DurableSessionWriter:
                 handle.flush()
                 os.fsync(handle.fileno())
             temporary.replace(self.metadata_path)
+            self._finalized = True
             return self.final_path
 
 

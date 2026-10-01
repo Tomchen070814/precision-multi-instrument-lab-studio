@@ -14,6 +14,7 @@ from typing import ClassVar
 import numpy as np
 
 from .models import InstrumentModel, Measurement, MeasurementFunction
+from .visa_lifetime import acquire_visa_manager
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,11 @@ def gpib_interface_name(resource_name: str) -> str:
 
 
 def gpib_bus_lock(resource_name: str) -> threading.RLock:
-    """Return the process-wide lock shared by instruments on one GPIB bus."""
+    """Arbitrate a GPIB bus; other transports only serialize their own device."""
     interface = gpib_interface_name(resource_name)
+    key = interface if interface.startswith("GPIB") else resource_name.strip().upper()
     with _GPIB_LOCKS_GUARD:
-        return _GPIB_LOCKS.setdefault(interface, threading.RLock())
+        return _GPIB_LOCKS.setdefault(key, threading.RLock())
 
 
 RANGES: dict[MeasurementFunction, list[tuple[str, str]]] = {
@@ -182,6 +184,16 @@ class InstrumentDriver(ABC):
     @abstractmethod
     def read_single(self, include_temperature: bool = False) -> Measurement: ...
 
+    def acquire_burst(
+        self,
+        count: int,
+        interval_s: float,
+        aperture_s: float,
+        function: MeasurementFunction | None = None,
+        measurement_range: str | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        raise InstrumentError(f"{self.name} 不支持突发采集")
+
     def disconnect(self) -> None:
         self.connected = False
 
@@ -238,7 +250,7 @@ class SimulatorDriver(InstrumentDriver):
     def configure(self, config: AcquisitionConfig) -> None:
         self.config = config
 
-    def _base_value(self) -> float:
+    def _base_value(self, function: MeasurementFunction | None = None) -> float:
         return {
             MeasurementFunction.DC_VOLTAGE: 10.0,
             MeasurementFunction.AC_VOLTAGE: 1.0,
@@ -252,7 +264,7 @@ class SimulatorDriver(InstrumentDriver):
             MeasurementFunction.PERIOD: 0.0001,
             MeasurementFunction.DIGITIZE_DC: 1.0,
             MeasurementFunction.DIGITIZE_AC: 1.0,
-        }[self.config.function]
+        }[function or self.config.function]
 
     def read_single(self, include_temperature: bool = False) -> Measurement:
         if not self.connected:
@@ -281,12 +293,14 @@ class SimulatorDriver(InstrumentDriver):
         count: int,
         interval_s: float,
         aperture_s: float,
+        function: MeasurementFunction | None = None,
+        measurement_range: str | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         count = max(1, int(count))
         x = np.arange(count, dtype=float) * interval_s
         frequency = min(0.08 / max(interval_s, 1e-9), 1234.0)
         rng = np.random.default_rng(3458)
-        y = self._base_value() + 0.015 * np.sin(2 * np.pi * frequency * x)
+        y = self._base_value(function) + 0.015 * np.sin(2 * np.pi * frequency * x)
         y += rng.normal(0, max(2e-6, aperture_s * 0.01), count)
         return x, y
 
@@ -302,10 +316,10 @@ def discover_visa_resources(backend: str = "") -> list[str]:
     if pyvisa is None:
         return []
     try:
-        manager = pyvisa.ResourceManager(backend or "")
-        resources = list(manager.list_resources())
-        manager.close()
-        return resources
+        with acquire_visa_manager(
+            lambda: pyvisa.ResourceManager(backend or "")
+        ) as manager:
+            return list(manager.list_resources())
     except Exception:
         logger.exception("VISA resource discovery failed")
         return []
@@ -405,6 +419,7 @@ class Keysight3458ADriver(InstrumentDriver):
         self.resource_name = resource_name
         self.visa_backend = visa_backend
         self._manager = None
+        self._manager_lease = None
         self._instrument = None
         self._last_temperature = np.nan
         self._bus_lock = gpib_bus_lock(resource_name)
@@ -440,7 +455,10 @@ class Keysight3458ADriver(InstrumentDriver):
             # command bus.  VISA sessions are independent, but the underlying
             # interface is not; serialize connection setup and identification.
             with self._bus_lock:
-                self._manager = pyvisa.ResourceManager(self.visa_backend or "")
+                self._manager_lease = acquire_visa_manager(
+                    lambda: pyvisa.ResourceManager(self.visa_backend or "")
+                )
+                self._manager = self._manager_lease.manager
                 self._instrument = self._manager.open_resource(self.resource_name)
                 self._instrument.timeout = 15_000
                 self._instrument.write_termination = "\n"
@@ -593,10 +611,12 @@ class Keysight3458ADriver(InstrumentDriver):
         count: int,
         interval_s: float,
         aperture_s: float,
-        function: MeasurementFunction = MeasurementFunction.DIGITIZE_DC,
-        measurement_range: str = "10",
+        function: MeasurementFunction | None = None,
+        measurement_range: str | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         instrument = self._require_instrument()
+        function = function or MeasurementFunction.DIGITIZE_DC
+        measurement_range = measurement_range or "10"
         count = int(count)
         if not 1 <= count <= 148_000:
             raise InstrumentError("突发样本数必须在 1 到 148000 之间")
@@ -700,9 +720,9 @@ class Keysight3458ADriver(InstrumentDriver):
                             exc,
                         )
         finally:
-            if self._manager is not None:
+            if self._manager_lease is not None:
                 try:
-                    self._manager.close()
+                    self._manager_lease.close()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "VISA manager close failed | resource=%s | error=%s",
@@ -710,6 +730,7 @@ class Keysight3458ADriver(InstrumentDriver):
                         exc,
                     )
             self._manager = None
+            self._manager_lease = None
             super().disconnect()
 
     def cancel_pending_io(self) -> None:
@@ -889,6 +910,7 @@ class ScpiDmmDriver(InstrumentDriver):
         self.resource_name = resource_name
         self.visa_backend = visa_backend
         self._manager = None
+        self._manager_lease = None
         self._instrument = None
         self._resource_lock = gpib_bus_lock(resource_name)
 
@@ -915,7 +937,10 @@ class ScpiDmmDriver(InstrumentDriver):
             )
         try:
             with self._resource_lock:
-                self._manager = pyvisa.ResourceManager(self.visa_backend or "")
+                self._manager_lease = acquire_visa_manager(
+                    lambda: pyvisa.ResourceManager(self.visa_backend or "")
+                )
+                self._manager = self._manager_lease.manager
                 self._instrument = self._manager.open_resource(self.resource_name)
                 self._instrument.timeout = 15_000
                 self._instrument.write_termination = "\n"
@@ -1124,9 +1149,9 @@ class ScpiDmmDriver(InstrumentDriver):
                         exc,
                     )
         finally:
-            if self._manager is not None:
+            if self._manager_lease is not None:
                 try:
-                    self._manager.close()
+                    self._manager_lease.close()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "SCPI VISA manager close failed | profile=%s | "
@@ -1136,6 +1161,7 @@ class ScpiDmmDriver(InstrumentDriver):
                         exc,
                     )
             self._manager = None
+            self._manager_lease = None
             super().disconnect()
 
     def cancel_pending_io(self) -> None:
@@ -1183,6 +1209,7 @@ class Fluke8508ADriver(InstrumentDriver):
         self.resource_name = resource_name
         self.visa_backend = visa_backend
         self._manager = None
+        self._manager_lease = None
         self._instrument = None
         self._resource_lock = gpib_bus_lock(resource_name)
 
@@ -1207,7 +1234,10 @@ class Fluke8508ADriver(InstrumentDriver):
             raise InstrumentError("缺少 PyVISA，无法连接 Fluke 8508A")
         try:
             with self._resource_lock:
-                self._manager = pyvisa.ResourceManager(self.visa_backend or "")
+                self._manager_lease = acquire_visa_manager(
+                    lambda: pyvisa.ResourceManager(self.visa_backend or "")
+                )
+                self._manager = self._manager_lease.manager
                 self._instrument = self._manager.open_resource(self.resource_name)
                 self._instrument.timeout = 30_000
                 self._instrument.write_termination = "\n"
@@ -1370,9 +1400,9 @@ class Fluke8508ADriver(InstrumentDriver):
                         exc,
                     )
         finally:
-            if self._manager is not None:
+            if self._manager_lease is not None:
                 try:
-                    self._manager.close()
+                    self._manager_lease.close()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "8508A VISA manager close failed | resource=%s | error=%s",
@@ -1380,6 +1410,7 @@ class Fluke8508ADriver(InstrumentDriver):
                         exc,
                     )
             self._manager = None
+            self._manager_lease = None
             super().disconnect()
 
     def cancel_pending_io(self) -> None:

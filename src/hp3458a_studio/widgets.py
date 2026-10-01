@@ -4,10 +4,51 @@ from datetime import datetime
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .styles import COLORS
 from .trend_logic import assign_unit_axes
+
+
+class _TrendViewBox(pg.ViewBox):
+    rectangle_selected = QtCore.Signal(float, float)
+
+    def shape(self) -> QtGui.QPainterPath:
+        # ViewBox's default bounding shape includes half a border pixel.
+        # Clip curves and annotations to the actual data rectangle instead.
+        path = QtGui.QPainterPath()
+        path.addRect(self.rect())
+        return path
+
+    def showAxRect(self, ax, **kwargs) -> None:
+        previous_min, previous_max = self.viewRange()[1]
+        selected = ax.normalized()
+        span = previous_max - previous_min
+        super().showAxRect(selected, **kwargs)
+        if span > 0:
+            self.rectangle_selected.emit(
+                (selected.top() - previous_min) / span,
+                (selected.bottom() - previous_min) / span,
+            )
+
+
+class _UnitViewBox(_TrendViewBox):
+    """Receive Y-axis gestures without intercepting the shared plot surface."""
+
+    def wheelEvent(self, event, axis=None) -> None:
+        if axis != self.YAxis:
+            event.ignore()
+            return
+        super().wheelEvent(event, axis=axis)
+
+    def mouseDragEvent(self, event, axis=None) -> None:
+        if axis != self.YAxis:
+            event.ignore()
+            return
+        super().mouseDragEvent(event, axis=axis)
+
+    def mouseClickEvent(self, event) -> None:
+        event.ignore()
 
 
 class Card(QtWidgets.QFrame):
@@ -52,6 +93,7 @@ class InteractivePlot(pg.PlotWidget):
         super().__init__(
             parent=parent,
             axisItems={"bottom": date_axis},
+            viewBox=_TrendViewBox(),
         )
         self.language = "zh"
         self.setBackground(COLORS["card"])
@@ -64,7 +106,7 @@ class InteractivePlot(pg.PlotWidget):
 
         plot_item = self.getPlotItem()
         self._manual_x_range = False
-        self._viewboxes = [plot_item.vb, pg.ViewBox(), pg.ViewBox()]
+        self._viewboxes = [plot_item.vb, _UnitViewBox(), _UnitViewBox()]
         self._axes = [
             plot_item.getAxis("left"),
             plot_item.getAxis("right"),
@@ -78,10 +120,11 @@ class InteractivePlot(pg.PlotWidget):
         self._axes[2].linkToView(self._viewboxes[2])
         for view in self._viewboxes[1:]:
             view.setXLink(self._viewboxes[0])
-            view.setMouseEnabled(x=False, y=False)
+            view.setMouseEnabled(x=False, y=True)
         self._viewboxes[0].sigResized.connect(self._update_view_geometry)
         self._viewboxes[0].sigXRangeChanged.connect(self._x_range_changed)
         self._viewboxes[0].sigRangeChangedManually.connect(self._range_changed_manually)
+        self._viewboxes[0].rectangle_selected.connect(self._rectangle_selected)
         self._update_view_geometry()
 
         for axis in (*self._axes, plot_item.getAxis("bottom")):
@@ -94,6 +137,7 @@ class InteractivePlot(pg.PlotWidget):
         self._channel_data: dict[str, tuple[np.ndarray, np.ndarray, str, str, str]] = {}
         self._channel_slots: dict[str, int] = {}
         self._unit_slots: dict[str, int] = {}
+        self._routing_signature: tuple[tuple[str, str, int], ...] = ()
         for channel, color in zip(
             self.CHANNELS,
             (COLORS["cyan"], COLORS["purple"], COLORS["green"]),
@@ -102,6 +146,9 @@ class InteractivePlot(pg.PlotWidget):
                 pen=pg.mkPen(color, width=1.6),
                 name=channel,
                 autoDownsample=True,
+                clipToView=True,
+                downsampleMethod="peak",
+                dynamicRangeLimit=1e3,
             )
             self._viewboxes[0].addItem(curve)
             self.legend.addItem(curve, channel)
@@ -117,6 +164,9 @@ class InteractivePlot(pg.PlotWidget):
             pen=pg.mkPen(COLORS["yellow"], width=1.3),
             name="Rolling average",
             autoDownsample=True,
+            clipToView=True,
+            downsampleMethod="peak",
+            dynamicRangeLimit=1e3,
         )
         self._viewboxes[0].addItem(self.smooth_curve)
         self.smooth_curve.setVisible(False)
@@ -169,7 +219,7 @@ class InteractivePlot(pg.PlotWidget):
         return tuple(self._unit_slots)
 
     def _update_view_geometry(self) -> None:
-        geometry = self._viewboxes[0].sceneBoundingRect()
+        geometry = self._viewboxes[0].mapRectToScene(self._viewboxes[0].rect())
         for view in self._viewboxes[1:]:
             view.setGeometry(geometry)
             view.linkedViewChanged(
@@ -178,6 +228,14 @@ class InteractivePlot(pg.PlotWidget):
             )
 
     def _assign_axes(self) -> None:
+        previous_unit_slots = dict(self._unit_slots)
+        previous_ranges = {
+            unit: (
+                self._viewboxes[slot].viewRange()[1][:],
+                self._viewboxes[slot].autoRangeEnabled()[1],
+            )
+            for unit, slot in previous_unit_slots.items()
+        }
         visible_units: list[str] = []
         for channel in self.CHANNELS:
             data = self._channel_data.get(channel)
@@ -192,9 +250,22 @@ class InteractivePlot(pg.PlotWidget):
             if (channel in self._channel_data and self._channel_data[channel][1].size)
         }
         channel_slots, self._unit_slots = assign_unit_axes(channel_units)
+        routing_signature = tuple(
+            (channel, channel_units[channel], channel_slots[channel])
+            for channel in self.CHANNELS
+            if channel in channel_units
+        )
+        if routing_signature != self._routing_signature:
+            self.clear_markers()
+            self.v_line.setVisible(False)
+            self.h_line.setVisible(False)
+            self.hover_label.setVisible(False)
+            self._routing_signature = routing_signature
         visible_units = list(self._unit_slots)
         for index, axis in enumerate(self._axes):
             axis.setVisible(index < len(visible_units))
+            if index > 0:
+                self._viewboxes[index].setVisible(index < len(visible_units))
             if index >= len(visible_units):
                 continue
             unit = visible_units[index]
@@ -228,19 +299,38 @@ class InteractivePlot(pg.PlotWidget):
                 None,
             )
             if old_slot is not None and old_slot != slot:
+                # Qt emits parent-change callbacks between removal and
+                # insertion, when the curve temporarily has no ViewBox.
+                curve.setClipToView(False)
                 self._viewboxes[old_slot].removeItem(curve)
             if curve not in self._viewboxes[slot].addedItems:
                 self._viewboxes[slot].addItem(curve)
+                curve.setClipToView(True)
             self._channel_slots[channel] = slot
         self._move_smooth_curve(self._smooth_channel)
+        for unit, slot in self._unit_slots.items():
+            if previous_unit_slots.get(unit) == slot:
+                continue
+            view = self._viewboxes[slot]
+            previous = previous_ranges.get(unit)
+            if previous is None:
+                view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            else:
+                (y_min, y_max), automatic = previous
+                view.setYRange(y_min, y_max, padding=0)
+                view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=automatic)
         self._update_view_geometry()
 
     def _move_smooth_curve(self, channel: str) -> None:
         slot = self._channel_slots.get(channel, 0)
+        if self.smooth_curve in self._viewboxes[slot].addedItems:
+            return
+        self.smooth_curve.setClipToView(False)
         for view in self._viewboxes:
             if self.smooth_curve in view.addedItems:
                 view.removeItem(self.smooth_curve)
         self._viewboxes[slot].addItem(self.smooth_curve)
+        self.smooth_curve.setClipToView(True)
 
     def set_labels(
         self,
@@ -381,8 +471,8 @@ class InteractivePlot(pg.PlotWidget):
 
     def zoom_x(self, factor: float) -> None:
         """Scale only the shared wall-clock axis around its current center."""
-        if factor <= 0:
-            raise ValueError("Zoom factor must be positive")
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("Zoom factor must be finite and positive")
         view = self._viewboxes[0]
         self._manual_x_range = True
         view.enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
@@ -390,8 +480,8 @@ class InteractivePlot(pg.PlotWidget):
 
     def zoom_y(self, factor: float, unit: str = "") -> None:
         """Scale all Y axes or one physical-unit axis independently."""
-        if factor <= 0:
-            raise ValueError("Zoom factor must be positive")
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("Zoom factor must be finite and positive")
         if unit:
             slots = (self._unit_slots[unit],) if unit in self._unit_slots else ()
         else:
@@ -401,7 +491,9 @@ class InteractivePlot(pg.PlotWidget):
             view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
             view.scaleBy(y=float(factor))
 
-    def _range_changed_manually(self, *_args) -> None:
+    def _range_changed_manually(self, changed) -> None:
+        if not changed[0]:
+            return
         self._manual_x_range = True
         self._emit_manual_x_window()
 
@@ -413,25 +505,17 @@ class InteractivePlot(pg.PlotWidget):
 
     def _x_range_changed(self, *_args) -> None:
         self._emit_manual_x_window()
-        if not self._box_zoom_enabled:
-            return
-        x_min, x_max = self._viewboxes[0].viewRange()[0]
-        for slot, view in enumerate(self._viewboxes):
-            values: list[np.ndarray] = []
-            for channel, channel_slot in self._channel_slots.items():
-                if channel_slot != slot or channel not in self._channel_data:
-                    continue
-                x, y, _unit, _color, _label = self._channel_data[channel]
-                mask = np.isfinite(x) & np.isfinite(y) & (x >= x_min) & (x <= x_max)
-                if np.any(mask):
-                    values.append(y[mask])
-            if not values:
-                continue
-            combined = np.concatenate(values)
-            minimum = float(np.min(combined))
-            maximum = float(np.max(combined))
-            padding = max((maximum - minimum) * 0.08, abs(maximum) * 1e-12, 1e-15)
-            view.setYRange(minimum - padding, maximum + padding, padding=0)
+
+    def _rectangle_selected(self, lower_fraction: float, upper_fraction: float) -> None:
+        for slot in range(1, len(self._unit_slots)):
+            view = self._viewboxes[slot]
+            y_min, y_max = view.viewRange()[1]
+            span = y_max - y_min
+            view.setYRange(
+                y_min + lower_fraction * span,
+                y_min + upper_fraction * span,
+                padding=0,
+            )
 
     def clear_markers(self) -> None:
         for view, point, label in self._markers:
@@ -463,6 +547,12 @@ class InteractivePlot(pg.PlotWidget):
             point = view.mapViewToScene(
                 QtCore.QPointF(float(x[index]), float(y[index]))
             )
+            if (
+                not self._viewboxes[0]
+                .mapRectToScene(self._viewboxes[0].rect())
+                .contains(point)
+            ):
+                continue
             distance = (point.x() - scene_position.x()) ** 2 + (
                 point.y() - scene_position.y()
             ) ** 2
@@ -484,13 +574,17 @@ class InteractivePlot(pg.PlotWidget):
 
     def _mouse_moved(self, event) -> None:
         position = event[0]
-        if not self.sceneBoundingRect().contains(position):
+        nearest = None
+        if (
+            self._viewboxes[0]
+            .mapRectToScene(self._viewboxes[0].rect())
+            .contains(position)
+        ):
+            nearest = self._nearest(position)
+        if nearest is None:
             self.v_line.setVisible(False)
             self.h_line.setVisible(False)
             self.hover_label.setVisible(False)
-            return
-        nearest = self._nearest(position)
-        if nearest is None:
             return
         channel, x_value, y_value = nearest
         slot = self._channel_slots.get(channel, 0)
@@ -514,7 +608,11 @@ class InteractivePlot(pg.PlotWidget):
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
             return
         position = event.scenePos()
-        if not self.sceneBoundingRect().contains(position):
+        if (
+            not self._viewboxes[0]
+            .mapRectToScene(self._viewboxes[0].rect())
+            .contains(position)
+        ):
             return
         nearest = self._nearest(position)
         if nearest is None:
@@ -541,8 +639,8 @@ class InteractivePlot(pg.PlotWidget):
             anchor=(0, 1),
         )
         label.setPos(x_value, y_value)
-        view.addItem(point)
-        view.addItem(label)
+        view.addItem(point, ignoreBounds=True)
+        view.addItem(label, ignoreBounds=True)
         self._markers.append((view, point, label))
         if len(self._markers) > 36:
             old_view, old_point, old_label = self._markers.pop(0)

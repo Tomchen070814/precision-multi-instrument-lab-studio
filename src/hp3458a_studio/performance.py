@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import ctypes
-import os
-import platform
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
+import psutil
 
 
 @dataclass(frozen=True)
@@ -49,85 +46,18 @@ def windowed_display_indices(
     return local_indices + start
 
 
-def _windows_memory_snapshot() -> MemorySnapshot:
-    class MemoryStatusEx(ctypes.Structure):
-        _fields_ = (
-            ("dwLength", ctypes.c_ulong),
-            ("dwMemoryLoad", ctypes.c_ulong),
-            ("ullTotalPhys", ctypes.c_ulonglong),
-            ("ullAvailPhys", ctypes.c_ulonglong),
-            ("ullTotalPageFile", ctypes.c_ulonglong),
-            ("ullAvailPageFile", ctypes.c_ulonglong),
-            ("ullTotalVirtual", ctypes.c_ulonglong),
-            ("ullAvailVirtual", ctypes.c_ulonglong),
-            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-        )
-
-    class ProcessMemoryCounters(ctypes.Structure):
-        _fields_ = (
-            ("cb", ctypes.c_ulong),
-            ("PageFaultCount", ctypes.c_ulong),
-            ("PeakWorkingSetSize", ctypes.c_size_t),
-            ("WorkingSetSize", ctypes.c_size_t),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-            ("PagefileUsage", ctypes.c_size_t),
-            ("PeakPagefileUsage", ctypes.c_size_t),
-        )
-
-    status = MemoryStatusEx()
-    status.dwLength = ctypes.sizeof(status)
-    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(  # type: ignore[attr-defined]
-        ctypes.byref(status)
-    ):
-        raise OSError("GlobalMemoryStatusEx failed")
-
-    counters = ProcessMemoryCounters()
-    counters.cb = ctypes.sizeof(counters)
-    process_handle = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
-    process_rss = 0
-    if ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
-        process_handle,
-        ctypes.byref(counters),
-        counters.cb,
-    ):
-        process_rss = int(counters.WorkingSetSize)
-
-    total = int(status.ullTotalPhys)
-    available = int(status.ullAvailPhys)
-    used = max(0, total - available)
-    percent = 100.0 * used / total if total else float(status.dwMemoryLoad)
-    return MemorySnapshot(percent, used, total, process_rss)
-
-
-def _linux_memory_snapshot() -> MemorySnapshot:
-    fields: dict[str, int] = {}
-    for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-        key, value = line.split(":", 1)
-        fields[key] = int(value.strip().split()[0]) * 1024
-    total = fields["MemTotal"]
-    available = fields.get("MemAvailable", fields.get("MemFree", 0))
-    used = max(0, total - available)
-    process_rss = 0
-    statm = Path("/proc/self/statm")
-    if statm.is_file():
-        pages = int(statm.read_text(encoding="ascii").split()[1])
-        process_rss = pages * int(os.sysconf("SC_PAGE_SIZE"))
+def memory_snapshot() -> MemorySnapshot:
+    """Return comparable physical RAM and process RSS on supported platforms."""
+    try:
+        memory = psutil.virtual_memory()
+        rss = psutil.Process().memory_info().rss
+    except psutil.Error as exc:
+        raise OSError(str(exc)) from exc
+    total = int(memory.total)
+    used = max(0, min(total, total - int(memory.available)))
     return MemorySnapshot(
         100.0 * used / total if total else 0.0,
         used,
         total,
-        process_rss,
+        int(rss),
     )
-
-
-def memory_snapshot() -> MemorySnapshot:
-    """Return current physical-memory and process-RSS usage."""
-    system = platform.system()
-    if system == "Windows":
-        return _windows_memory_snapshot()
-    if system == "Linux" and Path("/proc/meminfo").is_file():
-        return _linux_memory_snapshot()
-    raise OSError(f"Memory monitoring is not implemented for {system}")

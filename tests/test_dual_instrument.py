@@ -252,7 +252,7 @@ def test_dual_analysis_displays_a_and_b_on_every_analysis_page(app):
     assert window.tabs.tabText(window.statistics_tab_index).endswith("· A+B")
     assert window.tabs.tabText(window.stability_tab_index).endswith("· A+B")
     for banner in window.analysis_banners.values():
-        assert banner["channel"].text() == "3458A A + B"
+        assert banner["channel"].text() == "3458A A + 3458A B"
         assert "A GPIB0::21::INSTR" in banner["resource"].text()
         assert "B GPIB1::22::INSTR" in banner["resource"].text()
         assert "A 32 样本" in banner["meta"].text()

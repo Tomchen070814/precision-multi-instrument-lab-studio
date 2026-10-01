@@ -20,7 +20,9 @@ automatically.
 > queries and strictly verifies instrument identity, and the three protocol
 > families are isolated from one another.
 
-Current release: **v0.5.2**. This release builds on the 14-model architecture in
+Current release: **v0.5.3**. See [release notes](RELEASE_NOTES_v0.5.3.md) for
+individual instrument selection, plot zoom/clipping, and acquisition fixes.
+The v0.5.2 release built on the 14-model architecture in
 v0.5.1 with connection self-tests, layered driver/GPIB diagnostics, mandatory
 data-source identification, real-time memory monitoring, and long-session
 performance improvements.

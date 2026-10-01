@@ -51,11 +51,16 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
 
     def request_stop(self) -> None:
         self._stop_event.set()
-        self.driver.cancel_pending_io()
+        try:
+            self.driver.cancel_pending_io()
+        except Exception:
+            logger.exception("Precision acquisition I/O cancellation failed")
 
     def run(self) -> None:
         connection_complete = False
         try:
+            if self._stop_event.is_set():
+                return
             if self.preflight:
                 model = getattr(
                     self.driver,
@@ -70,10 +75,16 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
                     )
                     if diagnostic.blocking:
                         raise ConnectionPreflightError(diagnostic)
+            if self._stop_event.is_set():
+                return
             identity = self.driver.connect()
             connection_complete = True
+            if self._stop_event.is_set():
+                return
             self.identity_ready.emit(identity)
             self.driver.configure(self.config)
+            if self._stop_event.is_set():
+                return
             if self.start_gate is not None:
                 self.armed.emit()
                 while not self.start_gate.wait(0.05):
@@ -133,6 +144,8 @@ class PrecisionAcquisitionWorker(QtCore.QThread):
         finally:
             try:
                 self.driver.disconnect()
+            except Exception:
+                logger.exception("Precision acquisition driver cleanup failed")
             finally:
                 self.stopped.emit()
 
@@ -169,11 +182,16 @@ class BurstAcquisitionWorker(QtCore.QThread):
 
     def request_stop(self) -> None:
         self._stop_event.set()
-        self.driver.cancel_pending_io()
+        try:
+            self.driver.cancel_pending_io()
+        except Exception:
+            logger.exception("Burst acquisition I/O cancellation failed")
 
     def run(self) -> None:
         connection_complete = False
         try:
+            if self._stop_event.is_set():
+                return
             if self.preflight:
                 model = getattr(
                     self.driver,
@@ -188,8 +206,12 @@ class BurstAcquisitionWorker(QtCore.QThread):
                     )
                     if diagnostic.blocking:
                         raise ConnectionPreflightError(diagnostic)
+            if self._stop_event.is_set():
+                return
             identity = self.driver.connect()
             connection_complete = True
+            if self._stop_event.is_set():
+                return
             self.identity_ready.emit(identity)
             if self.start_gate is not None:
                 self.armed.emit()
@@ -213,23 +235,6 @@ class BurstAcquisitionWorker(QtCore.QThread):
                 exc.diagnostic.resource,
             )
             self.connection_issue.emit(exc.diagnostic)
-        except TypeError:
-            if not self._stop_event.is_set():
-                try:
-                    x, y = self.driver.acquire_burst(
-                        self.count,
-                        self.interval_s,
-                        self.aperture_s,
-                    )
-                    self.result_ready.emit(x, y)
-                except Exception as exc:
-                    if self._stop_event.is_set():
-                        logger.info(
-                            "Burst acquisition fallback stopped during pending I/O"
-                        )
-                    else:
-                        logger.exception("Burst acquisition fallback failed")
-                        self.failed.emit(str(exc))
         except Exception as exc:
             if self._stop_event.is_set():
                 logger.info("Burst acquisition worker stopped during pending I/O")
@@ -250,6 +255,8 @@ class BurstAcquisitionWorker(QtCore.QThread):
         finally:
             try:
                 self.driver.disconnect()
+            except Exception:
+                logger.exception("Burst acquisition driver cleanup failed")
             finally:
                 self.stopped.emit()
 

@@ -1,5 +1,6 @@
 import threading
 
+import pytest
 from PySide6 import QtCore
 
 from hp3458a_studio.drivers import (
@@ -7,9 +8,10 @@ from hp3458a_studio.drivers import (
     InstrumentDriver,
     InstrumentError,
     InstrumentIdentity,
+    MeasurementFunction,
     SimulatorDriver,
 )
-from hp3458a_studio.workers import PrecisionAcquisitionWorker
+from hp3458a_studio.workers import BurstAcquisitionWorker, PrecisionAcquisitionWorker
 
 
 def _wait_for(worker, timeout_ms=3000):
@@ -109,4 +111,132 @@ def test_stop_cancels_blocking_driver_io_without_reporting_failure():
 
     assert driver.cancel_calls == 1
     assert failures == []
+    assert application is not None
+
+
+def _worker_for(driver, mode):
+    if mode == "precision":
+        return PrecisionAcquisitionWorker(driver, AcquisitionConfig(max_samples=1))
+    return BurstAcquisitionWorker(
+        driver, 16, 0.001, 0.0001, MeasurementFunction.DIGITIZE_DC, "10"
+    )
+
+
+class _CountingDriver(_BlockingDriver):
+    def __init__(self):
+        super().__init__()
+        self.connect_calls = 0
+        self.configure_calls = 0
+        self.capture_calls = 0
+        self.disconnect_calls = 0
+
+    def connect(self):
+        self.connect_calls += 1
+        return super().connect()
+
+    def configure(self, config):
+        self.configure_calls += 1
+        super().configure(config)
+
+    def acquire_burst(self, **kwargs):
+        self.capture_calls += 1
+        raise TypeError("capture decoding failed")
+
+    def disconnect(self):
+        self.disconnect_calls += 1
+        super().disconnect()
+
+
+@pytest.mark.parametrize("mode", ["precision", "burst"])
+def test_stop_before_start_never_connects_or_configures(mode):
+    driver = _CountingDriver()
+    worker = _worker_for(driver, mode)
+    worker.request_stop()
+    worker.run()
+    assert driver.connect_calls == 0
+    assert driver.configure_calls == 0
+    assert driver.capture_calls == 0
+    assert driver.disconnect_calls == 1
+
+
+@pytest.mark.parametrize("mode", ["precision", "burst"])
+def test_stop_during_connect_never_configures_or_captures(mode):
+    driver = _CountingDriver()
+    worker = _worker_for(driver, mode)
+    connect = driver.connect
+
+    def cancelled_connect():
+        identity = connect()
+        worker.request_stop()
+        return identity
+
+    driver.connect = cancelled_connect
+    worker.run()
+    assert driver.connect_calls == 1
+    assert driver.configure_calls == 0
+    assert driver.capture_calls == 0
+    assert driver.disconnect_calls == 1
+
+
+def test_burst_internal_type_error_does_not_repeat_capture():
+    driver = _CountingDriver()
+    worker = _worker_for(driver, "burst")
+    failures = []
+    worker.failed.connect(failures.append)
+    worker.run()
+    assert driver.capture_calls == 1
+    assert failures == ["capture decoding failed"]
+    assert driver.disconnect_calls == 1
+
+
+def test_burst_connect_type_error_is_classified_without_capture():
+    driver = _CountingDriver()
+    worker = _worker_for(driver, "burst")
+    issues = []
+    worker.connection_issue.connect(issues.append)
+
+    def broken_connect():
+        raise TypeError("connection failed")
+
+    driver.connect = broken_connect
+    worker.run()
+    assert len(issues) == 1
+    assert driver.capture_calls == 0
+
+
+@pytest.mark.parametrize("mode", ["precision", "burst"])
+def test_cancellation_and_cleanup_errors_still_emit_stopped(mode):
+    driver = _CountingDriver()
+    worker = _worker_for(driver, mode)
+    stopped = []
+    worker.stopped.connect(lambda: stopped.append(True))
+
+    def broken_cleanup():
+        raise RuntimeError("vendor cleanup failed")
+
+    driver.cancel_pending_io = broken_cleanup
+    driver.disconnect = broken_cleanup
+    worker.request_stop()
+    worker.run()
+    assert stopped == [True]
+
+
+def test_three_workers_complete_independent_targets_after_shared_release():
+    application = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
+    gate = threading.Event()
+    workers = []
+    for channel, target in zip("ABC", (3, 5, 7), strict=True):
+        config = AcquisitionConfig(sample_interval_s=0.001, max_samples=target)
+        worker = PrecisionAcquisitionWorker(
+            SimulatorDriver(config, resource_name=f"SIM::3458A::{channel}"),
+            config,
+            start_gate=gate,
+        )
+        workers.append(worker)
+        worker.start()
+    gate.set()
+    for worker, target in zip(workers, (3, 5, 7), strict=True):
+        _wait_for(worker)
+        assert worker.completed_target
+        assert worker.samples_acquired == target
     assert application is not None

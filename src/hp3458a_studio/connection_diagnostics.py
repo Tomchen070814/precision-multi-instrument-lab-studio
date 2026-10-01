@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 
 from .models import InstrumentModel
+from .visa_lifetime import acquire_visa_manager
 
 logger = logging.getLogger(__name__)
 
@@ -276,9 +277,10 @@ def inspect_visa_environment(
     factory = manager_factory
     if factory is None:
         factory = lambda: pyvisa.ResourceManager("")  # type: ignore[union-attr]
-    manager = None
+    manager_lease = None
     try:
-        manager = factory()
+        manager_lease = acquire_visa_manager(factory)
+        manager = manager_lease.manager
         backend = _backend_description(manager)
         instrument_resources, all_resources = _list_all_resources(manager)
     except Exception as exc:  # noqa: BLE001 - vendor VISA exceptions vary
@@ -329,9 +331,9 @@ def inspect_visa_environment(
             raw_error=error_text,
         )
     finally:
-        if manager is not None:
+        if manager_lease is not None:
             try:
-                manager.close()
+                manager_lease.close()
             except Exception:  # noqa: BLE001
                 logger.warning("VISA self-check manager close failed")
 

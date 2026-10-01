@@ -106,7 +106,10 @@ class ChannelRuntime:
 
     @property
     def running(self) -> bool:
-        return self.worker is not None and self.worker.isRunning()
+        # A completed native thread can still have samples and its finished
+        # callback queued in the GUI. Keep the channel busy until that callback
+        # has drained the samples and finalized the capture.
+        return self.worker is not None
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -188,7 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 model = InstrumentModel(saved_model)
             except ValueError:
                 model = InstrumentModel.KEYSIGHT_3458A
-            model_index = panel.model_combo.findData(model)
+            model_index = panel.model_combo.findData(model.value)
             if model_index >= 0:
                 panel.model_combo.setCurrentIndex(model_index)
             saved_resource = str(
@@ -510,7 +513,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.box_zoom_button = QtWidgets.QPushButton("框选放大")
         self.box_zoom_button.setCheckable(True)
         self.box_zoom_button.setToolTip(
-            "启用后拖动矩形框选择时间范围，并自动缩放每个单位的 Y 轴。"
+            "启用后拖动矩形框，同时缩放时间轴和各物理量 Y 轴的对应矩形范围。"
         )
         self.reset_zoom_button = QtWidgets.QPushButton("重置视图")
         top.addWidget(self.box_zoom_button)
@@ -556,6 +559,11 @@ class MainWindow(QtWidgets.QMainWindow):
         plots.addWidget(self.fft_plot, 1)
         plots.addWidget(self.asd_plot, 1)
         layout.addLayout(plots, 1)
+        self.spectrum_note = QtWidgets.QLabel()
+        self.spectrum_note.setObjectName("hint")
+        self.spectrum_note.setWordWrap(True)
+        self.spectrum_note.setVisible(False)
+        layout.addWidget(self.spectrum_note)
         return page
 
     def _build_statistics_tab(self) -> QtWidgets.QWidget:
@@ -679,6 +687,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(splitter, 1)
         self.stability_note = QtWidgets.QLabel("需要至少 4 个有效样本")
         self.stability_note.setObjectName("hint")
+        self.stability_note.setWordWrap(True)
         layout.addWidget(self.stability_note)
         return page
 
@@ -717,14 +726,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_inspector(self) -> QtWidgets.QWidget:
         inspector = QtWidgets.QWidget()
         inspector.setObjectName("inspector")
-        inspector.setMinimumWidth(260)
-        inspector.setMaximumWidth(360)
         layout = QtWidgets.QVBoxLayout(inspector)
+        layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(9)
 
         layout.addWidget(self._section("分析显示"))
         self.analysis_channel_combo = QtWidgets.QComboBox()
+        self.analysis_channel_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         for channel in self.CHANNELS:
             self.analysis_channel_combo.addItem(f"Channel {channel}", channel)
         layout.addWidget(self.analysis_channel_combo)
@@ -757,6 +769,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("所选会话"))
         session_card = Card()
         form = QtWidgets.QFormLayout(session_card)
+        form.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         form.setContentsMargins(12, 11, 12, 11)
         self.session_count = QtWidgets.QLabel("0")
         self.session_duration = QtWidgets.QLabel("0 s")
@@ -779,6 +792,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("仪表身份"))
         identity_card = Card()
         identity_form = QtWidgets.QFormLayout(identity_card)
+        identity_form.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
         identity_form.setContentsMargins(12, 11, 12, 11)
         self.identity_model = QtWidgets.QLabel("—")
         self.identity_resource = QtWidgets.QLabel("—")
@@ -794,6 +808,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             label.setWordWrap(True)
             label.setObjectName("hint")
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
+            label.setSizePolicy(policy)
         identity_form.addRow("Model", self.identity_model)
         identity_form.addRow("Resource", self.identity_resource)
         identity_form.addRow("REV", self.identity_fw)
@@ -809,14 +826,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.clear_button = QtWidgets.QPushButton("清空所选")
         self.clear_button.setObjectName("danger")
         data_buttons.addWidget(self.import_button, 0, 0)
-        data_buttons.addWidget(self.export_button, 0, 1)
-        data_buttons.addWidget(self.export_both_button, 1, 0)
-        data_buttons.addWidget(self.clear_button, 1, 1)
+        data_buttons.addWidget(self.export_button, 1, 0)
+        data_buttons.addWidget(self.export_both_button, 2, 0)
+        data_buttons.addWidget(self.clear_button, 3, 0)
         layout.addLayout(data_buttons)
 
         layout.addWidget(self._section("安全自动保存"))
         autosave_card = Card()
         autosave_layout = QtWidgets.QVBoxLayout(autosave_card)
+        autosave_layout.setSizeConstraint(
+            QtWidgets.QLayout.SizeConstraint.SetMinimumSize
+        )
         autosave_layout.setContentsMargins(12, 10, 12, 10)
         autosave_layout.setSpacing(6)
         self.autosave_status = QtWidgets.QLabel(
@@ -827,6 +847,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.autosave_path_label = QtWidgets.QLabel(str(self.autosave_root))
         self.autosave_path_label.setObjectName("hint")
         self.autosave_path_label.setWordWrap(True)
+        for label in (self.autosave_status, self.autosave_path_label):
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
+            label.setSizePolicy(policy)
         self.open_autosave_button = QtWidgets.QPushButton("打开自动保存目录")
         self.open_autosave_button.setObjectName("subtle")
         autosave_layout.addWidget(self.autosave_status)
@@ -837,6 +861,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._section("事件"))
         self.event_log = QtWidgets.QTextEdit()
         self.event_log.setReadOnly(True)
+        self.event_log.setMinimumHeight(100)
         self.event_log.setMaximumHeight(180)
         layout.addWidget(self.event_log)
         self.export_diagnostic_button = QtWidgets.QPushButton("导出诊断报告")
@@ -844,15 +869,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.export_diagnostic_button.setToolTip(
             "导出软件版本、通道状态、事件记录和历史错误日志；不包含测量样本。"
         )
-        self.box_zoom_button.setToolTip(
-            tr(
-                self.language,
-                "启用后拖动矩形框选择时间范围，并自动缩放每个单位的 Y 轴。",
-            )
-        )
         layout.addWidget(self.export_diagnostic_button)
         layout.addStretch()
-        return inspector
+        self.inspector_scroll = QtWidgets.QScrollArea()
+        self.inspector_scroll.setObjectName("inspectorScroll")
+        self.inspector_scroll.setWidgetResizable(True)
+        self.inspector_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.inspector_scroll.setMinimumWidth(260)
+        self.inspector_scroll.setMaximumWidth(360)
+        self.inspector_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.inspector_scroll.setWidget(inspector)
+        return self.inspector_scroll
 
     def _section(self, text: str) -> QtWidgets.QLabel:
         label = QtWidgets.QLabel(text.upper())
@@ -938,6 +967,21 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.stop_all_button.setText(tr(self.language, "停止全部"))
         self.multi_analysis_check.setText(tr(self.language, "同时显示所有启用通道"))
+        self.allan_normalized.setText(
+            "Normalize Allan to ppm" if self.language == "en" else "Allan 归一化为 ppm"
+        )
+        self.analysis_channel_combo.setToolTip(
+            "Select an instrument to view its measurements and statistics. "
+            "Enable all-channel display to compare instruments."
+            if self.language == "en"
+            else "选择仪器可单独查看该台仪器的数据和统计；勾选同时显示可比较全部通道。"
+        )
+        self.box_zoom_button.setToolTip(
+            "Drag a rectangle to zoom the time axis and the corresponding "
+            "vertical range on each physical-unit Y axis."
+            if self.language == "en"
+            else "启用后拖动矩形框，同时缩放时间轴和各物理量 Y 轴的对应矩形范围。"
+        )
         self.export_both_button.setText(tr(self.language, "导出全部"))
         self.tabs.setTabText(self.trend_tab_index, tr(self.language, "多通道趋势"))
         self.trend_plot.set_labels(
@@ -1131,7 +1175,12 @@ class MainWindow(QtWidgets.QMainWindow):
             check.toggled.connect(self._sync_selection_changed)
         self.channel_c_enabled.toggled.connect(self._channel_c_toggled)
         self.language_combo.currentIndexChanged.connect(self._language_changed)
-        self.analysis_channel_combo.currentIndexChanged.connect(self._refresh_views)
+        self.analysis_channel_combo.currentIndexChanged.connect(
+            self._analysis_channel_selected
+        )
+        self.analysis_channel_combo.activated.connect(self._analysis_channel_activated)
+        self.device_tabs.currentChanged.connect(self._device_tab_selected)
+        self.device_tabs.tabBarClicked.connect(self._device_tab_clicked)
         self.dual_analysis_check.toggled.connect(self._refresh_views)
         self.import_button.clicked.connect(self._import_csv)
         self.export_button.clicked.connect(self._export_csv)
@@ -1189,6 +1238,41 @@ class MainWindow(QtWidgets.QMainWindow):
     def _instrument_model_changed(self, channel: str) -> None:
         self._update_channel_model_ui(channel)
         self._refresh_views()
+
+    def _analysis_channel_selected(self, *_args) -> None:
+        """A specific instrument choice opens its individual data view."""
+        channel = self.selected_channel
+        with (
+            QtCore.QSignalBlocker(self.device_tabs),
+            QtCore.QSignalBlocker(self.multi_analysis_check),
+        ):
+            self.device_tabs.setCurrentIndex(self.CHANNELS.index(channel))
+            self.multi_analysis_check.setChecked(False)
+        self._trend_x_window = None
+        self.trend_plot.reset_view()
+        self._refresh_views()
+
+    def _analysis_channel_activated(self, *_args) -> None:
+        # Choosing the already-selected item emits activated without changing
+        # the index; it must still leave all-channel comparison mode.
+        if self.multi_analysis_check.isChecked():
+            self._analysis_channel_selected()
+
+    def _device_tab_clicked(self, index: int) -> None:
+        if self.multi_analysis_check.isChecked():
+            self._device_tab_selected(index)
+
+    def _device_tab_selected(self, index: int) -> None:
+        if index < 0 or index >= len(self.CHANNELS):
+            return
+        channel = self.CHANNELS[index]
+        if channel not in self.enabled_channels:
+            return
+        with QtCore.QSignalBlocker(self.analysis_channel_combo):
+            self.analysis_channel_combo.setCurrentIndex(
+                self.analysis_channel_combo.findData(channel)
+            )
+        self._analysis_channel_selected()
 
     @property
     def selected_channel(self) -> str:
@@ -1254,15 +1338,19 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _discover_resources(self) -> None:
-        if self._visa_scan_worker is not None and self._visa_scan_worker.isRunning():
+        if self._shutdown_in_progress or self._visa_scan_worker is not None:
             return
         self._set_global_status(tr(self.language, "正在扫描 VISA…"), "idle")
         for panel in self.panels.values():
             panel.resource_refresh.setEnabled(False)
         worker = VisaDiscoveryWorker(discover_visa_resources, self)
         self._visa_scan_worker = worker
-        worker.result_ready.connect(self._visa_scan_finished)
-        worker.finished.connect(self._visa_scan_cleanup)
+        worker.result_ready.connect(
+            self._visa_scan_finished, QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        worker.finished.connect(
+            self._visa_scan_cleanup, QtCore.Qt.ConnectionType.QueuedConnection
+        )
         worker.start()
 
     def _visa_scan_finished(self, all_resources: list[str]) -> None:
@@ -1321,6 +1409,8 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _run_connection_self_check(self, channel: str) -> None:
+        if self._shutdown_in_progress or self.channels[channel].running:
+            return
         panel = self.panels[channel]
         if panel.source_kind != "visa":
             QtWidgets.QMessageBox.information(
@@ -1334,7 +1424,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
         existing = self._connection_check_workers.get(channel)
-        if existing is not None and existing.isRunning():
+        if existing is not None:
             return
         worker = ConnectionCheckWorker(
             panel.resource_name,
@@ -1353,9 +1443,13 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{panel.instrument_model.display_name} · {panel.resource_name}"
         )
         worker.result_ready.connect(
-            partial(self._connection_self_check_finished, channel)
+            partial(self._connection_self_check_finished, channel),
+            QtCore.Qt.ConnectionType.QueuedConnection,
         )
-        worker.finished.connect(partial(self._connection_self_check_cleanup, channel))
+        worker.finished.connect(
+            partial(self._connection_self_check_cleanup, channel),
+            QtCore.Qt.ConnectionType.QueuedConnection,
+        )
         worker.start()
 
     def _connection_self_check_finished(
@@ -1506,6 +1600,8 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _toggle_channel(self, channel: str) -> None:
+        if self._shutdown_in_progress:
+            return
         runtime = self.channels[channel]
         if runtime.running:
             self._stop_channel(channel)
@@ -1527,6 +1623,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._start_channel(channel, config)
 
     def _start_both(self) -> None:
+        if self._shutdown_in_progress or self._group_gate is not None:
+            return
         members = self.sync_channels
         if not members:
             QtWidgets.QMessageBox.information(
@@ -1579,45 +1677,41 @@ class MainWindow(QtWidgets.QMainWindow):
             else f"{group_name} 同步启动：正在分别连接并配置所选仪表"
         )
         for key in members:
-            self._start_channel(key, configs[key], start_gate=gate)
+            if not self._start_channel(key, configs[key], start_gate=gate):
+                self._abort_group_start()
+                return
 
     def _start_channel(
         self,
         channel: str,
         config: AcquisitionConfig,
         start_gate: threading.Event | None = None,
-    ) -> None:
+    ) -> bool:
         runtime = self.channels[channel]
         panel = self.panels[channel]
-        runtime.session.clear()
-        runtime.session.unit = config.function.unit
-        runtime.session.source = (
+        if self._shutdown_in_progress or runtime.running:
+            return False
+        source = (
             f"{panel.instrument_model.short_name} {channel} Simulator"
             if panel.source_kind == "sim"
             else panel.resource_name
         )
-        runtime.session.channel = channel
-        runtime.session.instrument_model = panel.instrument_model.display_name
-        runtime.session.resource = runtime.session.source
-        runtime.last_temperature = np.nan
-        runtime.minimum = np.inf
-        runtime.maximum = -np.inf
-        runtime.error = ""
-        runtime.identity = None
-        runtime.target_samples = (
-            config.max_samples
-            if panel.acquisition_mode == "precision"
-            else int(panel.burst_count.value())
-        )
         try:
-            runtime.durable_writer = DurableSessionWriter(
+            driver = self._make_driver(channel, config)
+        except Exception as exc:
+            logger.exception(
+                "Instrument driver initialization failed | channel=%s", channel
+            )
+            self._worker_failed(channel, str(exc))
+            return False
+        try:
+            writer = DurableSessionWriter(
                 channel=channel,
                 instrument_model=panel.instrument_model.display_name,
-                resource=runtime.session.source,
+                resource=source,
                 run_id=new_run_id(),
                 root=self.autosave_root,
             )
-            runtime.last_autosave_path = str(runtime.durable_writer.partial_path)
         except Exception as exc:
             logger.exception(
                 "Durable autosave initialization failed | channel=%s",
@@ -1625,6 +1719,8 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             runtime.durable_writer = None
             runtime.error = str(exc)
+            self._set_channel_state(channel, "采集错误")
+            self._abort_group_start()
             QtWidgets.QMessageBox.critical(
                 self,
                 (
@@ -1640,8 +1736,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 + str(exc),
             )
-            return
-        driver = self._make_driver(channel, config)
+            return False
+        runtime.durable_writer = writer
+        runtime.last_autosave_path = str(writer.partial_path)
+        runtime.session.clear()
+        runtime.session.unit = config.function.unit
+        runtime.session.source = source
+        runtime.session.channel = channel
+        runtime.session.instrument_model = panel.instrument_model.display_name
+        runtime.session.resource = source
+        runtime.last_temperature = np.nan
+        runtime.minimum = np.inf
+        runtime.maximum = -np.inf
+        runtime.error = ""
+        runtime.identity = None
+        runtime.target_samples = (
+            config.max_samples
+            if panel.acquisition_mode == "precision"
+            else int(panel.burst_count.value())
+        )
         if panel.acquisition_mode == "precision":
             worker: PrecisionAcquisitionWorker | BurstAcquisitionWorker
             worker = PrecisionAcquisitionWorker(
@@ -1651,7 +1764,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 preflight=panel.source_kind == "visa",
             )
             worker.measurement_ready.connect(
-                partial(self._measurement_received, channel)
+                partial(
+                    self._dispatch_worker_event,
+                    channel,
+                    worker,
+                    self._measurement_received,
+                ),
+                QtCore.Qt.ConnectionType.QueuedConnection,
             )
         else:
             worker = BurstAcquisitionWorker(
@@ -1664,15 +1783,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 start_gate=start_gate,
                 preflight=panel.source_kind == "visa",
             )
-            worker.result_ready.connect(partial(self._burst_received, channel))
-        worker.identity_ready.connect(partial(self._identity_received, channel))
-        worker.armed.connect(partial(self._channel_armed, channel))
-        worker.failed.connect(partial(self._worker_failed, channel))
-        worker.connection_issue.connect(partial(self._worker_connection_issue, channel))
+            worker.result_ready.connect(
+                partial(
+                    self._dispatch_worker_event, channel, worker, self._burst_received
+                ),
+                QtCore.Qt.ConnectionType.QueuedConnection,
+            )
+        for signal, callback in (
+            (worker.identity_ready, self._identity_received),
+            (worker.armed, self._channel_armed),
+            (worker.failed, self._worker_failed),
+            (worker.connection_issue, self._worker_connection_issue),
+        ):
+            signal.connect(
+                partial(self._dispatch_worker_event, channel, worker, callback),
+                QtCore.Qt.ConnectionType.QueuedConnection,
+            )
         # QThread.finished is emitted only after run() has returned. Using the
         # worker's earlier custom "stopped" signal here could drop the final
         # Python reference while the native thread was still unwinding.
-        worker.finished.connect(partial(self._worker_stopped, channel))
+        worker.finished.connect(
+            partial(self._dispatch_worker_event, channel, worker, self._worker_stopped),
+            QtCore.Qt.ConnectionType.QueuedConnection,
+        )
         runtime.worker = worker
         panel.set_running(
             True, stoppable=isinstance(worker, PrecisionAcquisitionWorker)
@@ -1725,6 +1858,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_views()
         worker.start()
         self._update_sync_controls()
+        return True
+
+    def _dispatch_worker_event(self, channel: str, worker, callback, *args) -> None:
+        """Deliver only events belonging to the channel's current capture."""
+        if self.channels[channel].worker is worker:
+            callback(channel, *args)
+
+    def _abort_group_start(self) -> set[str]:
+        """Cancel every selected peer before releasing a startup gate."""
+        gate = self._group_gate
+        if gate is None:
+            return set()
+        members = set(self._group_members)
+        self._group_gate = None
+        self._group_pending.clear()
+        self._group_members.clear()
+        for member in members:
+            runtime = self.channels[member]
+            if runtime.worker is not None:
+                if runtime.worker.isRunning():
+                    runtime.worker.request_stop()
+                self.panels[member].start_button.setEnabled(False)
+                if not runtime.error:
+                    self._set_channel_state(member, "正在停止")
+        gate.set()
+        self._update_sync_controls()
+        return members
 
     def _channel_armed(self, channel: str) -> None:
         if self._group_gate is None or channel not in self._group_members:
@@ -1753,7 +1913,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def _stop_channel(self, channel: str) -> None:
         runtime = self.channels[channel]
         worker = runtime.worker
-        if worker is None or not worker.isRunning():
+        if worker is None:
+            return
+        if channel in self._group_members:
+            self._abort_group_start()
+            self._log(
+                "Synchronized startup cancelled."
+                if self.language == "en"
+                else "同步启动已取消"
+            )
+            return
+        if not worker.isRunning():
+            self.panels[channel].start_button.setEnabled(False)
             return
         if isinstance(worker, BurstAcquisitionWorker):
             QtWidgets.QMessageBox.information(
@@ -1776,13 +1947,13 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _stop_all(self) -> None:
-        requested = False
-        if self._group_gate is not None:
-            self._group_gate.set()
+        cancelled_group = self._abort_group_start()
+        requested = bool(cancelled_group)
         for key in self.CHANNELS:
             worker = self.channels[key].worker
-            if worker is not None and worker.isRunning():
-                worker.request_stop()
+            if worker is not None and key not in cancelled_group:
+                if worker.isRunning():
+                    worker.request_stop()
                 requested = True
                 self.panels[key].start_button.setEnabled(False)
                 self._set_channel_state(key, "正在停止")
@@ -1969,16 +2140,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.language == "en"
             else f"{channel} {diagnostic.title('zh')}：{diagnostic.summary('zh')}"
         )
-        if self._group_gate is not None and channel in self._group_members:
-            self._group_gate.set()
-            for other in self._group_members - {channel}:
-                other_worker = self.channels[other].worker
-                if other_worker is not None:
-                    other_worker.request_stop()
-            self._group_gate = None
-            self._group_pending.clear()
-            self._group_members.clear()
-            self._update_sync_controls()
+        if channel in self._group_members:
+            self._abort_group_start()
         if self._shutdown_in_progress:
             return
         ConnectionDiagnosticDialog(
@@ -2003,16 +2166,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.language == "en"
             else f"{channel} 错误：{message}"
         )
-        if self._group_gate is not None and channel in self._group_members:
-            self._group_gate.set()
-            for other in self._group_members - {channel}:
-                other_worker = self.channels[other].worker
-                if other_worker is not None:
-                    other_worker.request_stop()
-            self._group_gate = None
-            self._group_pending.clear()
-            self._group_members.clear()
-            self._update_sync_controls()
+        if channel in self._group_members:
+            self._abort_group_start()
             message = (
                 f"Instrument channel {channel} failed during synchronized startup; "
                 f"the other channels were cancelled.\n\n{message}"
@@ -2020,6 +2175,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 else f"仪表通道 {channel} 在同步启动阶段失败，其他通道已取消。\n\n"
                 f"{message}"
             )
+        if self._shutdown_in_progress:
+            return
         QtWidgets.QMessageBox.critical(
             self,
             (
@@ -2037,6 +2194,10 @@ class MainWindow(QtWidgets.QMainWindow):
             isinstance(worker, PrecisionAcquisitionWorker) and worker.completed_target
         )
         runtime.worker = None
+        if worker is not None:
+            worker.deleteLater()
+        if channel in self._group_members:
+            self._abort_group_start()
         self.panels[channel].set_running(False)
         autosave_status = (
             "error"
@@ -2073,14 +2234,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         else:
             self._set_channel_state(channel, "已停止")
-        if channel in self._group_members:
-            self._group_members.discard(channel)
-            self._group_pending.discard(channel)
-            if not self._group_members:
-                self._group_gate = None
-                self._update_sync_controls()
-        else:
-            self._update_sync_controls()
+        self._update_sync_controls()
         self._refresh_views()
         if completed_target:
             self._log(
@@ -2299,6 +2453,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 label.style().polish(label)
             banner["resource"].setText(resource)
             banner["meta"].setText(meta_text)
+            banner["meta"].setToolTip("")
         for key in self.CHANNELS:
             panel = self.panels[key]
             legend_identity = (
@@ -2516,7 +2671,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 color=self.CHANNEL_COLORS[trend_channel],
                 label=label,
                 visible=(
-                    trend_channel in self.enabled_channels and bool(len(trend_session))
+                    trend_channel in self.analysis_channels and bool(len(trend_session))
                 ),
                 refresh_axes=False,
             )
@@ -2530,7 +2685,7 @@ class MainWindow(QtWidgets.QMainWindow):
         axis_count = len(
             {
                 self.channels[key].session.unit
-                for key in self.enabled_channels
+                for key in self.analysis_channels
                 if len(self.channels[key].session)
             }
         )
@@ -2593,7 +2748,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_histograms(selected_data)
             self._update_stability(selected_data)
             self._update_statistics_summaries(analysis_data)
-            self.stability_note.setText(
+            mixed_unit_note = (
                 "Mixed physical units use independent trend axes. "
                 f"FFT/ASD/Allan currently show selected channel {channel}; "
                 "select another channel to analyze it without unit mixing."
@@ -2602,6 +2757,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"FFT/ASD/Allan 当前显示所选通道 {channel}，"
                 "切换通道即可分别分析，避免错误混用单位。"
             )
+            if any(values[4] > 0 for values in selected_data.values()):
+                mixed_unit_note += "\n" + self.stability_note.text()
+            self.stability_note.setText(mixed_unit_note)
         else:
             self._update_spectra(analysis_data)
             self._update_histograms(analysis_data)
@@ -2609,6 +2767,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_identity_view()
 
     def _clear_analysis_views(self, reason: str | None = None) -> None:
+        self.spectrum_note.clear()
+        self.spectrum_note.setVisible(False)
         for channel in self.CHANNELS:
             self.fft_curves[channel].setData([], [])
             self.asd_curves[channel].setData([], [])
@@ -2668,16 +2828,20 @@ class MainWindow(QtWidgets.QMainWindow):
         for channel in self.CHANNELS:
             self.fft_curves[channel].setData([], [])
             self.asd_curves[channel].setData([], [])
+        blocked = [channel for channel, data in analysis_data.items() if data[4] > 0]
+        warning = self._time_grid_warning("spectrum", blocked, "FFT/ASD")
+        self.spectrum_note.setText(warning)
+        self.spectrum_note.setVisible(bool(warning))
         unit = ""
         for channel, (
             x,
             y,
             _temperature,
             channel_unit,
-            _removed,
+            removed,
         ) in analysis_data.items():
             unit = channel_unit
-            if y.size < 4:
+            if y.size < 4 or removed > 0:
                 continue
             result = spectrum(y, estimate_sample_period(x))
             self.fft_curves[channel].setData(result["frequency"], result["amplitude"])
@@ -2688,6 +2852,33 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         self.fft_plot.setLabel("left", tr(self.language, "幅值"), units=unit or None)
         self.asd_plot.setLabel("left", "ASD", units=f"{unit}/√Hz" if unit else None)
+
+    def _time_grid_warning(
+        self, page: str, channels: list[str], calculation: str
+    ) -> str:
+        """Explain why gap-producing rejection cannot feed uniform-grid analysis."""
+        if not channels:
+            return ""
+        channel_text = "+".join(channels)
+        warning = (
+            f"{channel_text}: {calculation} paused because outlier rejection "
+            "leaves an incomplete time grid. Disable outlier rejection to "
+            "analyze the complete time grid."
+            if self.language == "en"
+            else f"{channel_text}：剔除异常值后时间网格不完整，已暂停 {calculation}；"
+            "关闭异常值剔除后可分析完整时间网格。"
+        )
+        meta = self.analysis_banners[page]["meta"]
+        meta.setText(
+            meta.text()
+            + (
+                f" · {channel_text} {calculation} paused"
+                if self.language == "en"
+                else f" · {channel_text} {calculation} 已暂停"
+            )
+        )
+        meta.setToolTip(warning)
+        return warning
 
     def _update_statistics_summaries(
         self,
@@ -2754,13 +2945,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.drift_fit_curves[channel].setData([], [])
         normalized = self.allan_normalized.isChecked()
         note_parts: list[str] = []
+        blocked = [channel for channel, data in analysis_data.items() if data[4] > 0]
+        warning = self._time_grid_warning("stability", blocked, "Allan")
+        if warning:
+            note_parts.append(warning)
         unit = ""
         for channel, (
             x,
             y,
             temperature,
             channel_unit,
-            _removed,
+            removed,
         ) in analysis_data.items():
             unit = channel_unit
             if y.size < 4:
@@ -2770,12 +2965,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"{tr(self.language, '需要至少 4 个有效样本')}"
                 )
                 continue
-            period = estimate_sample_period(x)
-            tau, deviation = allan_deviation(y, period, normalize=normalized)
-            if normalized:
-                deviation = deviation * 1e6
-            valid_allan = (tau > 0) & (deviation > 0)
-            self.allan_curves[channel].setData(tau[valid_allan], deviation[valid_allan])
+            if removed == 0:
+                period = estimate_sample_period(x)
+                tau, deviation = allan_deviation(y, period, normalize=normalized)
+                if normalized:
+                    deviation = deviation * 1e6
+                valid_allan = (tau > 0) & (deviation > 0)
+                self.allan_curves[channel].setData(
+                    tau[valid_allan], deviation[valid_allan]
+                )
             fitted, drift_per_hour, r_squared = linear_fit(x, y)
             self.drift_points[channel].setData(x, y)
             self.drift_fit_curves[channel].setData(x, fitted)
@@ -2851,12 +3049,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         try:
-            imported = read_measurement_csv(path)
+            imported = read_measurement_csv(path, channel=channel)
             runtime.session.replace(
                 imported.elapsed_s,
                 imported.values,
                 unit=imported.unit,
                 source=Path(path).name,
+                timestamps=imported.timestamps,
+                temperatures_c=imported.temperatures_c,
             )
             runtime.session.channel = channel
             runtime.session.instrument_model = self.panels[
@@ -3281,15 +3481,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 panel.resource_name,
             )
         self.settings.sync()
+        self._live_refresh_timer.stop()
+        self._analysis_refresh_timer.stop()
+        self._memory_timer.stop()
         running = [
-            runtime
-            for runtime in self.channels.values()
-            if runtime.worker is not None and runtime.worker.isRunning()
+            runtime for runtime in self.channels.values() if runtime.worker is not None
         ]
         background_running = bool(
-            self._visa_scan_worker is not None and self._visa_scan_worker.isRunning()
-        ) or any(
-            worker.isRunning() for worker in self._connection_check_workers.values()
+            self._visa_scan_worker is not None or self._connection_check_workers
         )
         if not running and not background_running:
             self._shutdown_complete = True
@@ -3313,10 +3512,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ",".join(runtime.key for runtime in running),
             background_running,
         )
-        if self._group_gate is not None:
-            self._group_gate.set()
-        for runtime in running:
-            runtime.worker.request_stop()
+        self._stop_all()
         self._shutdown_timer.start()
         self._poll_shutdown()
 
@@ -3324,15 +3520,11 @@ class MainWindow(QtWidgets.QMainWindow):
         active = [
             runtime.key
             for runtime in self.channels.values()
-            if runtime.worker is not None and runtime.worker.isRunning()
+            if runtime.worker is not None
         ]
-        if self._visa_scan_worker is not None and self._visa_scan_worker.isRunning():
+        if self._visa_scan_worker is not None:
             active.append("VISA_SCAN")
-        active.extend(
-            f"CHECK_{channel}"
-            for channel, worker in self._connection_check_workers.items()
-            if worker.isRunning()
-        )
+        active.extend(f"CHECK_{channel}" for channel in self._connection_check_workers)
         if not active:
             self._shutdown_timer.stop()
             self._shutdown_complete = True

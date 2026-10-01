@@ -1,0 +1,46 @@
+name: Python checks and Windows build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.14']
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check src tests
+      - name: Test
+        run: python -m pytest -q
+      - name: Build Windows application
+        if: runner.os == 'Windows' && matrix.python == '3.11'
+        run: python -m PyInstaller --noconfirm --clean 3458A_Lab_Studio.spec
+      - name: Upload Windows application
+        if: runner.os == 'Windows' && matrix.python == '3.11'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Precision-Lab-Studio-Windows
+          path: dist/Precision-Multi-Instrument-Lab-Studio.exe
+          if-no-files-found: error
